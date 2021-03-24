@@ -4037,6 +4037,10 @@ class TreeSequence:
             breakpoints = map(float, breakpoints)
         return breakpoints
 
+    def genomes(self):
+        genomes = self.ll_tree_sequence.get_genomes()
+        return genomes
+
     def at(self, position, **kwargs):
         """
         Returns the tree covering the specified genomic location. The returned tree
@@ -7139,3 +7143,6 @@ def write_ms(
                         )
             else:
                 print(file=output)
+
+def calculate_ibx(genome, ids=None, intervals=None):
+    return _tskit.calculate_ibx(genome, ids, intervals)

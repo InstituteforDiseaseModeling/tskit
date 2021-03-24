@@ -34,6 +34,7 @@
 #include <structmember.h>
 #include <numpy/arrayobject.h>
 #include <float.h>
+#include <stdlib.h>
 
 #include "kastore.h"
 #include "tskit.h"
@@ -6468,6 +6469,149 @@ out:
     return ret;
 }
 
+static void
+_traverse_u16(tsk_tree_t *tree, tsk_id_t node, tsk_id_t root, void* genome, size_t stride, size_t current_interval /*, int depth */)
+{
+    // Visit node - store root at current interval for this node
+    uint16_t* pibd = (uint16_t*)(genome + node * stride) + current_interval;
+    *pibd = root;
+
+    // Visit node's children
+    for (tsk_id_t child = tree->left_child[node]; child != TSK_NULL; child = tree->right_sib[child]) {
+        _traverse_u16(tree, child, root, genome, stride, current_interval /*, depth + 1 */);
+    }
+}
+
+static void
+_traverse_u32(tsk_tree_t *tree, tsk_id_t node, tsk_id_t root, void* genome, size_t stride, size_t current_interval /*, int depth */)
+{
+    // Visit node - store root at current interval for this node
+    uint32_t* pibd = (uint32_t*)(genome + node * stride) + current_interval;
+    *pibd = root;
+
+    // Visit node's children
+    for (tsk_id_t child = tree->left_child[node]; child != TSK_NULL; child = tree->right_sib[child]) {
+        _traverse_u32(tree, child, root, genome, stride, current_interval /*, depth + 1 */);
+    }
+}
+
+static void
+traverse_recursive_u16(tsk_tree_t *tree, void* genome, size_t stride, size_t current_interval)
+{
+    // For each unique root, visit root (and it's children)
+    for (tsk_id_t root = tree->left_root; root != TSK_NULL; root = tree->right_sib[root]) {
+        _traverse_u16(tree, root, root, genome, stride, current_interval /*, 0 */);
+    }
+}
+
+static void
+traverse_recursive_u32(tsk_tree_t *tree, void* genome, size_t stride, size_t current_interval)
+{
+    // For each unique root, visit root (and it's children)
+    for (tsk_id_t root = tree->left_root; root != TSK_NULL; root = tree->right_sib[root]) {
+        _traverse_u32(tree, root, root, genome, stride, current_interval /*, 0 */);
+    }
+}
+
+/*
+void progress(size_t& percent, size_t current, size_t total, clock_t start)
+{
+    if ( 100 * current / total > percent ) {
+        percent = 100 * current / total;
+        clock_t now = clock();
+        double elapsed = now - start;
+        double remaining = ((double(total) / current - 1) * elapsed) / CLOCKS_PER_SEC;
+        std::cout << percent << "% complete, ETA " << remaining << " seconds." << std::endl;
+    }
+}
+*/
+
+static PyObject *
+TreeSequence_get_genomes(TreeSequence *self)
+{
+    PyObject *ret = NULL;
+    PyArrayObject *array = NULL;
+
+    if (TreeSequence_check_state(self) != 0) {
+        goto out;
+    }
+
+    tsk_tree_t tree;
+    // check_tsk_error(tsk_tree_init(&tree, self->tree_sequence, 0));
+    tsk_tree_init(&tree, self->tree_sequence, 0);
+    // check_tsk_error(tsk_tree_first(&tree));
+    tsk_tree_first(&tree);
+    size_t id_size = 2;
+    for (tsk_id_t root = tree.left_root; root != TSK_NULL; root = tree.right_sib[root]) {
+        if ( root >= (1 << 16) ) {
+            id_size = 4;
+            break;
+        }
+    }
+    printf("sizeof(id) = %ld\n", id_size);
+
+    tsk_size_t num_nodes = self->tree_sequence->tables->nodes.num_rows;
+    tsk_size_t num_trees = self->tree_sequence->num_trees;
+    printf("# nodes = .. %d\n", num_nodes);
+    printf("# trees =    %d\n", num_trees);
+
+    PyTypeObject *subtype = &PyArray_Type;
+    PyArray_Descr *descr = PyArray_DescrFromType(id_size == 2 ? NPY_UINT16 : NPY_UINT32);
+    int ndims = 2;
+    npy_intp dims[2] = { num_nodes, num_trees };    // { #rows, #columns }
+
+#define IDM_ALIGNMENT   32
+
+    size_t stride = (num_trees * id_size + (IDM_ALIGNMENT - 1)) & ~(IDM_ALIGNMENT - 1);
+    printf("stride = ... %ld\n", stride);
+    // Note that in C order, the first (index 0) dimension is rows, so it is the full stride
+    // The second (index 1) dimension is columns, so it is just the element size
+    npy_intp strides[2] = { (npy_intp)stride, id_size };
+
+    size_t total_bytes = num_nodes * stride;
+    void *pdata;
+    // https://stackoverflow.com/a/6563142 - posix_memalign() rather than allocate_aligned()
+    posix_memalign(&pdata, IDM_ALIGNMENT, total_bytes);
+    printf("bytes =      %ld\n", total_bytes);
+    printf("pdata = .... %p\n", pdata);
+
+    // https://stackoverflow.com/a/58001107 - NPY_ARRAY_OWNDATA should tell Numpy to free(pdata) when appropriate
+    int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
+    PyObject *obj = NULL;
+    // PyObject *PyArray_NewFromDescr(PyTypeObject *subtype, PyArray_Descr *descr, int nd, npy_intp const *dims, npy_intp const *strides, void *data, int flags, PyObject *obj)
+    array = (PyArrayObject *) PyArray_NewFromDescr(subtype, descr, ndims, dims, strides, pdata, flags, obj);
+
+    printf("NDIM =       %d\n", PyArray_NDIM(array));
+    printf("FLAGS = .... %d\n", PyArray_FLAGS(array));
+    printf("TYPE =       %d\n", PyArray_TYPE(array));
+    printf("DATA = ..... %p\n", PyArray_DATA(array));
+    printf("BYTES =      %p\n", PyArray_BYTES(array));
+    printf("ITEMSIZE = . %ld\n", PyArray_ITEMSIZE(array));
+    printf("SIZE =       %ld\n", PyArray_SIZE(array));
+    printf("NBYTES = ... %ld\n", PyArray_NBYTES(array));
+
+    int iter = 0;
+    size_t current_interval = 0;
+    // size_t percent = 0;
+    // clock_t start = clock();
+    for (iter = tsk_tree_first(&tree), current_interval = 0; iter == 1; iter = tsk_tree_next(&tree), ++current_interval) {
+        // progress(percent, current_interval, num_trees, start);
+        if ( id_size == sizeof(uint16_t) ) {
+            traverse_recursive_u16(&tree, (uint16_t*)pdata, stride, current_interval);
+        } else {
+            traverse_recursive_u32(&tree, (uint32_t*)pdata, stride, current_interval);
+        }
+    }
+    // check_tsk_error(iter);
+
+    ret = (PyObject *) array;
+    array = NULL;
+
+out:
+    Py_XDECREF(array);
+    return ret;
+}
+
 static PyObject *
 TreeSequence_get_file_uuid(TreeSequence *self)
 {
@@ -7699,6 +7843,10 @@ static PyMethodDef TreeSequence_methods[] = {
         .ml_meth = (PyCFunction) TreeSequence_get_breakpoints,
         .ml_flags = METH_NOARGS,
         .ml_doc = "Returns the tree breakpoints as a numpy array." },
+    { .ml_name = "get_genomes",
+        .ml_meth = (PyCFunction) TreeSequence_get_genomes,
+        .ml_flags = METH_NOARGS,
+        .ml_doc = "Returns the individual genomes of the tree as a numpy array." },
     { .ml_name = "get_file_uuid",
         .ml_meth = (PyCFunction) TreeSequence_get_file_uuid,
         .ml_flags = METH_NOARGS,
@@ -10113,6 +10261,90 @@ tskit_get_tskit_version(PyObject *self)
     return Py_BuildValue("iii", TSK_VERSION_MAJOR, TSK_VERSION_MINOR, TSK_VERSION_PATCH);
 }
 
+static PyObject *
+calculate_ibx(PyObject *self, PyObject *args)
+{
+    PyObject *ret = NULL;
+    PyArrayObject *ibx = NULL;
+    PyArrayObject *ndarraygenomes = NULL;
+    PyArrayObject *ndvectorids = NULL;
+    PyArrayObject *ndvectorintervals = NULL;
+    if ( !PyArg_ParseTuple(args, "O!|OO", &PyArray_Type, (PyObject *)&ndarraygenomes,
+                                                         (PyObject *)&ndvectorids,
+                                                         (PyObject *)&ndvectorintervals) )
+        goto out;
+
+    printf("In calculate_ibx...(%p, %p, %p)\n", ndarraygenomes, ndvectorids, ndvectorintervals);
+
+    // Validate arguments
+    {
+        // ndarraygenomes has two dimensions
+        if ( !(PyArray_NDIM(ndarraygenomes) == 2) ) {
+            PyErr_SetString(PyExc_RuntimeError, "Genome array must be two dimensional.\n");
+            goto out;
+        }
+
+        // ndarraygenomes is uint8_t, uint16_t or uint32_t
+        switch (PyArray_TYPE(ndarraygenomes)) {
+            case NPY_INT8:
+            case NPY_UINT8:
+            case NPY_INT16:
+            case NPY_UINT16:
+            case NPY_INT32:
+            case NPY_UINT32:
+                // all is okay
+                break;
+
+            default:
+                PyErr_SetString(PyExc_RuntimeError, "Genome array must be integral type of 1, 2, or 4 bytes.\n");
+                goto out;
+        }
+
+        // ndarraygenomes is appropriately aligned
+        if ( !(((size_t)PyArray_DATA(ndarraygenomes) & (IDM_ALIGNMENT -1)) == 0) ) {
+            PyErr_Format(PyExc_RuntimeError, "Genome array must be aligned to %d byte boundary.\n", IDM_ALIGNMENT);
+            goto out;
+        }
+
+        // ndvectorids is None or one dimension (vector) of uint32_t, <= #rows of ndarraygenomes
+        if ( (PyObject *)ndvectorids == Py_None ) ndvectorids = NULL;
+        if ( ndvectorids ) {
+            if ( !(PyArray_Check(ndvectorids) &&
+                   (PyArray_NDIM(ndvectorids) == 1) &&
+                   (PyArray_TYPE(ndvectorids) == NPY_UINT32) &&
+                   (PyArray_DIMS(ndvectorids)[0] <= PyArray_DIMS(ndarraygenomes)[0])) ) {
+                       PyErr_SetString(PyExc_RuntimeError, "Genome IDs must be a one dimensional vector of uint32 <= #rows in genome array.\n");
+                       goto out;
+                   }
+        }
+
+        // ndvectorintervals is None or one dimension (vector) of uint32_t, == #columns of ndarraygenomes
+        if ( (PyObject *)ndvectorintervals == Py_None ) ndvectorintervals = NULL;
+        if ( ndvectorintervals ) {
+            if ( !(PyArray_Check(ndvectorintervals) &&
+                   (PyArray_NDIM(ndvectorintervals) == 1) &&
+                   (PyArray_TYPE(ndvectorintervals) == NPY_UINT32) &&
+                   (PyArray_DIMS(ndvectorintervals)[0] == PyArray_DIMS(ndarraygenomes)[1])) ) {
+                       PyErr_SetString(PyExc_RuntimeError, "Interval lengths must be a one dimensional vector of uint32 == #columns in genome array.\n");
+                       goto out;
+                   }
+        }
+    }
+
+    npy_int size = ndvectorids ? PyArray_DIMS(ndvectorids)[0] : PyArray_DIMS(ndarraygenomes)[0];
+    npy_intp dimensions[2] = { size, size };
+    ibx = (PyArrayObject *)PyArray_ZEROS(2, dimensions, NPY_UINT32, false);
+
+    // Calculations here...
+
+    ret = (PyObject *) ibx;
+    ibx = NULL;
+
+out:
+    Py_XDECREF(ibx);
+    return ret;
+}
+
 static PyMethodDef tskit_methods[] = {
     { .ml_name = "get_kastore_version",
         .ml_meth = (PyCFunction) tskit_get_kastore_version,
@@ -10122,6 +10354,10 @@ static PyMethodDef tskit_methods[] = {
         .ml_meth = (PyCFunction) tskit_get_tskit_version,
         .ml_flags = METH_NOARGS,
         .ml_doc = "Returns the version of the tskit C API we have built in." },
+    { .ml_name = "calculate_ibx",
+        .ml_meth = (PyCFunction) calculate_ibx,
+        .ml_flags = METH_VARARGS,
+        .ml_doc = "Calculates IBD/IBS for a genome." },
     { NULL } /* Sentinel */
 };
 

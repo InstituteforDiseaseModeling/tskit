@@ -36,7 +36,7 @@ tsk_source_files = [
     "haplotype_matching.c",
 ]
 sources = (
-    ["_tskitmodule.c"]
+    ["_tskitmodule.c", "idmextensions.c"]
     + [os.path.join(libdir, "tskit", f) for f in tsk_source_files]
     + [os.path.join(kastore_dir, "kastore.c")]
 )

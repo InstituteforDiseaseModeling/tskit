@@ -160,9 +160,9 @@ size_t get_elementsize(tsk_tree_t *tree)
     return size;
 }
 
-void calculate_ibd08(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject *output, PyObject **hashes, PyObject **mapping);
-void calculate_ibx16(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject *output, PyObject **hashes, PyObject **mapping);
-void calculate_ibd32(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject *output, PyObject **hashes, PyObject **mapping);
+void calculate_ibd08(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject **ndibx, PyObject **digests, PyObject **mapping);
+void calculate_ibx16(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject **ndibx, PyObject **digests, PyObject **mapping);
+void calculate_ibd32(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject **ndibx, PyObject **digests, PyObject **mapping);
 
 PyObject *idm_calculate_ibx(PyObject *args)
 {
@@ -172,9 +172,6 @@ PyObject *idm_calculate_ibx(PyObject *args)
     PyArrayObject *ndvectorintervals = nullptr;
     PyObject *hashes                 = nullptr;
     PyObject *mapping                = nullptr;
-
-    npy_intp dimensions[2];
-    npy_int size;
 
     if ( !PyArg_ParseTuple(args, "O!|OO", &PyArray_Type, (PyObject *)&ndarraygenomes,
                                                          (PyObject *)&ndvectorids,
@@ -265,18 +262,13 @@ PyObject *idm_calculate_ibx(PyObject *args)
         }
     }
 
-    size = ndvectorids ? PyArray_DIMS(ndvectorids)[0] : PyArray_DIMS(ndarraygenomes)[0];
-    dimensions[0] = dimensions[1] = size;
-    ibx = (PyArrayObject *)PyArray_ZEROS(2, dimensions, NPY_UINT32, false);
-
-    // Calculations here...
     switch (PyArray_ITEMSIZE(ndarraygenomes)) {
         case 1:
             //calculate_ibd08();
             break;
 
         case 2:
-            calculate_ibx16(ndarraygenomes, ndvectorids, ndvectorintervals, ibx, &hashes, &mapping);
+            calculate_ibx16(ndarraygenomes, ndvectorids, ndvectorintervals, &ibx, &hashes, &mapping);
             break;
 
         case 4:
@@ -289,15 +281,15 @@ PyObject *idm_calculate_ibx(PyObject *args)
 
 out:
     // NxN calculated values, unique hash values, entry->hash index map
-    return Py_BuildValue("OOO", ibx, Py_None, Py_None);
+    return Py_BuildValue("OOO", ibx, hashes, mapping);
 }
 
-void calculate_ibd08(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject *output, PyObject **hashes, PyObject **mapping)
+void calculate_ibd08(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject **ndibx, PyObject **digests, PyObject **mapping)
 {
     return;
 }
 
-void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObject *ndintervals, PyArrayObject *output, PyObject **digests, PyObject **mapping)
+void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObject *ndintervals, PyArrayObject **ndibx, PyObject **digests, PyObject **mapping)
 {
     printf("In calculate_ibx16()...\n");
     size_t num_rows = PyArray_DIMS(ndids ? ndids : ndgenomes)[0];               printf("num_rows = %ld\n", num_rows);
@@ -312,18 +304,21 @@ void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObje
     std::vector<std::string> hashes;
 
     clock_t start = clock();
-    for ( size_t ididx = 0; ididx < num_rows; ++ididx ) {
-        size_t row = pids[ididx];
+    for ( size_t idindex = 0; idindex < num_rows; ++idindex ) {
+        size_t row = pids[idindex];
         hashes.push_back(sha256(pdata + row * stride, count));
     }
     clock_t finish = clock();
 
     std::cout << double(finish - start) / CLOCKS_PER_SEC << " seconds to calculate SHA-256 hashes for " << num_rows << " genomes." << std::endl;
 
-    /*
-    Create a Python list of hashes. Implicitly, list[N] == hash_value for ndids[N]
-    */
+    // Create a Python list of hashes. Implicitly, list[N] == hash_value for ndids[N]
     *digests = nullptr;
+    *digests = PyList_New(hashes.size());
+    for ( size_t index = 0; index < hashes.size(); ++index) {
+        PyObject *string = PyUnicode_FromKindAndData(PyUnicode_1BYTE_KIND, hashes[index].c_str(), hashes[index].size());
+        /* int ret = */ PyList_SetItem(*digests, index, string);
+    }
 
     // Determine unique hash values and sort them.
     std::set<std::string> unique(hashes.begin(), hashes.end());
@@ -339,10 +334,14 @@ void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObje
         index_for_hash[sorted[i]] = i;
     }
 
-    /*
-    Create a Python map of each hash value to its position in the sorted list.
-    */
-   *mapping = nullptr;
+    // Create a Python map of each hash value to its position in the sorted list.
+    *mapping = nullptr;
+    *mapping = PyDict_New();
+    for ( auto& entry : index_for_hash ) {
+        PyObject* key = PyUnicode_FromKindAndData(PyUnicode_1BYTE_KIND, entry.first.c_str(), entry.first.size());
+        PyObject* value =  PyLong_FromUnsignedLong( entry.second );
+        /* int ret = */ PyDict_SetItem(*mapping, key, value);
+    }
 
     // Figure out how many genomes fit in the CPU cache.
     size_t genome_size = num_intervals * sizeof(uint16_t);  // GENOME is uint16_t
@@ -355,29 +354,41 @@ void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObje
     size_t num_blocks = (num_rows + block_size - 1) / block_size;
     std::cout << "num_blocks is " << num_blocks << std::endl;
 
-    uint32_t* ibx = (uint32_t*)PyArray_DATA(output);
-    memset((void*)ibx, 0xFF, (size_t)(PyArray_DIMS(output)[0] * PyArray_STRIDES(output)[0]));
+    npy_intp dimensions[2] = { npy_intp(num_unique), npy_intp(num_unique) };
+    *ndibx = (PyArrayObject *)PyArray_ZEROS(2, dimensions, NPY_UINT32, false);
+
+    uint32_t* ibx = (uint32_t*)PyArray_DATA(*ndibx);
+    memset((void*)ibx, 0xFF, size_t(PyArray_NBYTES(*ndibx)));
 
     uint32_t* pintervals = (uint32_t*)PyArray_DATA(ndintervals);
 
     start = clock();
     size_t percent = 0;
+
     for ( size_t yblock = 0; yblock < num_blocks; ++yblock ) {                      // We are processing banks of rows, each bank of size block_size. There are num_blocks of these banks.
         progress(percent, yblock, num_blocks, start);
+
         for ( size_t xblock = yblock; xblock < num_blocks; ++xblock ) {             // We are processing bundles of columns, each bundle of size block_size, there are num_blocks of these bundles.
+
             size_t ystart = yblock * block_size;                                    // Starting y for this bank is current block * block size
             size_t ystop = std::min(ystart + block_size, num_rows);                 // Ending y for this bank is smaller of next block or num_rows
+
             for ( size_t ygenome = ystart; ygenome < ystop; ++ygenome ) {           // Iterate from starting y to ending y
-                size_t yibx = index_for_hash[ hashes[ pids[ ygenome ] ] ];          // Actual ID (index) is pids[ygenome], index in result is index_for_hash[ hashes[ actual ID ] ]
+
+                size_t yibx = index_for_hash[ hashes[ ygenome ] ];                  // Index in result is index_for_hash[ hashes[ id index (ygenome) ] ]
                 size_t xstart = xblock * block_size;                                // Starting x for this bundle is current block * block size
                 size_t xstop = std::min(xstart + block_size, num_rows);             // Ending x for this bundle is smaller of nextg block or num_rows
+
                 for ( size_t xgenome = xstart; xgenome < xstop; ++xgenome ) {       // Iterate from starting x to ending x
-                    size_t xibx = index_for_hash[ hashes[ pids [ xgenome ] ] ];     // Actual ID (index) is pids[xgenom], index in result is index_for_hash[ hashes[ actual ID ]]
+
+                    size_t xibx = index_for_hash[ hashes[ xgenome ] ];              // Index in result is index_for_hash[ hashes[ id index (xgenome) ]]
+
                     if ( ibx[ yibx * num_unique + xibx ] == 0xFFFFFFFF ) {          // If the value for this particular pair of hashes has not already been calculated...
-                        uint32_t ibx_for_pair = 0;                                  // IBD is _always_ uint32_t
-                        uint16_t* genomea = (uint16_t*)(pdata + ygenome * stride);  // GENOME in _this function_ is uint16_t (c.f. calculate_ibx32)
-                        uint16_t* genomeb = (uint16_t*)(pdata + xgenome * stride);  // GENOME in _this function_ is uint16_t (c.f. calculate_ibx32)
-                        size_t num_simd = num_intervals & ~7;                       // We calculate 8 at a time, round num_intervals down to largest multiple of 8
+
+                        uint32_t ibx_for_pair = 0;                                          // IBD is _always_ uint32_t
+                        uint16_t* genomea = (uint16_t*)(pdata + pids[ygenome] * stride);    // GENOME in _this function_ is uint16_t (c.f. calculate_ibx32)
+                        uint16_t* genomeb = (uint16_t*)(pdata + pids[xgenome] * stride);    // GENOME in _this function_ is uint16_t (c.f. calculate_ibx32)
+                        size_t num_simd = num_intervals & ~7;                               // We calculate 8 at a time, round num_intervals down to largest multiple of 8
                         for ( size_t simd = 0; simd < num_simd; simd += 8 ) {
                             __m256i ga    = _mm256_cvtepi16_epi32(_mm_load_si128((const __m128i*)(genomea + simd)));    // load 8x uint16_t, convert to 8x uint32_t
                             __m256i gb    = _mm256_cvtepi16_epi32(_mm_load_si128((const __m128i*)(genomeb + simd)));    // load 8x uint16_t, convert to 8x uint32_t
@@ -391,6 +402,7 @@ void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObje
                                 ibx_for_pair += pintervals[iinterval];
                             }
                         }
+
                         ibx[ yibx * num_unique + xibx ] = ibx[ xibx * num_unique + yibx ] = ibx_for_pair;
                     }
                 }
@@ -398,16 +410,13 @@ void calculate_ibx16(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObje
         }
     }
     finish = clock();
-    std::cout << double(finish - start) / CLOCKS_PER_SEC << " seconds to calculate IBD for each hash pair." << std::endl;
+    std::cout << double(finish - start) / CLOCKS_PER_SEC << " seconds to calculate IBx for all hash pairs." << std::endl;
 
 out:
-    Py_XDECREF(*digests);
-    Py_XDECREF(*mapping);
-
     return;
 }
 
-void calculate_ibd32(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject *output, PyObject **hashes, PyObject **mapping)
+void calculate_ibd32(PyArrayObject *genomes, PyArrayObject *ids, PyArrayObject *intervals, PyArrayObject **ndibx, PyObject **digests, PyObject **mapping)
 {
     return;
 }

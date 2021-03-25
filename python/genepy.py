@@ -56,9 +56,15 @@ for i in range(gen.shape[0]):
 """
 
 """
+python3
 import _idm
 import numpy as np
 gen = np.random.randint(0, 8, (8192, 131072), dtype=np.uint16)
 ids = np.asarray(range(16), dtype=np.uint32)
-ibx = _idm.calculate_ibx(gen, ids)
+# ibx, hashes, mapping = _idm.calculate_ibx(gen, ids)
+ibx, hashes, mapping = _idm.calculate_ibx(gen, np.asarray([0, 1, 2], dtype=np.uint32))
+for y in range(2):
+    for x in range(y, 3):
+        print(f"{y}:{x} = {np.sum(gen[y,:] == gen[x,:])}")
+
 """

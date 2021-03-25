@@ -54,3 +54,11 @@ for i in range(gen.shape[0]):
 11: 07707846d42ad8a9f058f197f570ca0f762bb47f7bb27bf97532604c0d376517
 12: 2bde0bcbb4ddfe74eb3b17064009a73916c91f7476dae1d54af8a6dcc0be9857
 """
+
+"""
+import _idm
+import numpy as np
+gen = np.random.randint(0, 8, (8192, 131072), dtype=np.uint16)
+ids = np.asarray(range(16), dtype=np.uint32)
+ibx = _idm.calculate_ibx(gen, ids)
+"""

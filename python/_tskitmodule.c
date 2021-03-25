@@ -32,14 +32,11 @@
 
 #include <Python.h>
 #include <structmember.h>
-#define PY_ARRAY_UNIQUE_SYMBOL TSKIT_ARRAY_API
 #include <numpy/arrayobject.h>
 #include <float.h>
 
 #include "kastore.h"
 #include "tskit.h"
-
-#include "idmextensions.h"
 
 #define SET_COLS 0
 #define APPEND_COLS 1
@@ -6472,21 +6469,6 @@ out:
 }
 
 static PyObject *
-TreeSequence_get_genomes(TreeSequence *self)
-{
-    PyObject *ret = NULL;
-
-    if (TreeSequence_check_state(self) != 0) {
-        goto out;
-    }
-
-    ret = idm_get_genomes(self->tree_sequence);
-
-out:
-    return ret;
-}
-
-static PyObject *
 TreeSequence_get_file_uuid(TreeSequence *self)
 {
     PyObject *ret = NULL;
@@ -7717,10 +7699,6 @@ static PyMethodDef TreeSequence_methods[] = {
         .ml_meth = (PyCFunction) TreeSequence_get_breakpoints,
         .ml_flags = METH_NOARGS,
         .ml_doc = "Returns the tree breakpoints as a numpy array." },
-    { .ml_name = "get_genomes",
-        .ml_meth = (PyCFunction) TreeSequence_get_genomes,
-        .ml_flags = METH_NOARGS,
-        .ml_doc = "Returns the individual genomes of the tree as a numpy array." },
     { .ml_name = "get_file_uuid",
         .ml_meth = (PyCFunction) TreeSequence_get_file_uuid,
         .ml_flags = METH_NOARGS,
@@ -10135,16 +10113,6 @@ tskit_get_tskit_version(PyObject *self)
     return Py_BuildValue("iii", TSK_VERSION_MAJOR, TSK_VERSION_MINOR, TSK_VERSION_PATCH);
 }
 
-static PyObject *
-calculate_ibx(PyObject *self, PyObject *args)
-{
-    PyObject *ret = NULL;
-
-    ret = idm_calculate_ibx(args);
-
-    return ret;
-}
-
 static PyMethodDef tskit_methods[] = {
     { .ml_name = "get_kastore_version",
         .ml_meth = (PyCFunction) tskit_get_kastore_version,
@@ -10154,10 +10122,6 @@ static PyMethodDef tskit_methods[] = {
         .ml_meth = (PyCFunction) tskit_get_tskit_version,
         .ml_flags = METH_NOARGS,
         .ml_doc = "Returns the version of the tskit C API we have built in." },
-    { .ml_name = "calculate_ibx",
-        .ml_meth = (PyCFunction) calculate_ibx,
-        .ml_flags = METH_VARARGS,
-        .ml_doc = "Calculates IBD/IBS for a genome." },
     { NULL } /* Sentinel */
 };
 

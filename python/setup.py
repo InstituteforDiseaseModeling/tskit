@@ -36,7 +36,7 @@ tsk_source_files = [
     "haplotype_matching.c",
 ]
 sources = (
-    ["_tskitmodule.c", "idmextensions.c", "sha256.c"]
+    ["_tskitmodule.c"]
     + [os.path.join(libdir, "tskit", f) for f in tsk_source_files]
     + [os.path.join(kastore_dir, "kastore.c")]
 )
@@ -55,6 +55,26 @@ _tskit_module = Extension(
     libraries=libraries,
     define_macros=defines,
     include_dirs=["lwt_interface", libdir, kastore_dir],
+)
+
+_idm_module = Extension(
+    name="_idm",
+    sources=["_idmmodule.cpp", "idmextensions.cpp", "sha256.cpp"]
+    + [os.path.join(libdir, "tskit", f) for f in tsk_source_files]
+    + [os.path.join(kastore_dir, "kastore.c")],
+    include_dirs=[libdir, kastore_dir],
+    define_macros=defines,
+    # undef_macros=
+    # library_dirs=
+    libraries=libraries,
+    # runtime_library_dirs=
+    # extra_objects=
+    extra_compile_args=["-msse3", "-mavx2", "-O3"], # "-std=c++11"],
+    # extra_link_args=
+    # export_symbols=
+    depends=["_idmmodule.cpp", "idmextensions.h", "idmextensions.cpp", "sha256.h", "sha256.cpp"],
+    language="c++",
+    # optional=False
 )
 
 here = os.path.abspath(os.path.dirname(__file__))
@@ -92,7 +112,7 @@ setup(
     keywords="tree sequence",
     packages=["tskit"],
     include_package_data=True,
-    ext_modules=[_tskit_module],
+    ext_modules=[_tskit_module, _idm_module],
     install_requires=[
         "jsonschema>=3.0.0",
         numpy_ver,

@@ -2,8 +2,10 @@
 
 from hashlib import sha256
 import numpy as np
+from pathlib import Path
 import unittest
 
+import tskit
 import _idm
 
 NUM_GENOMES = 1024
@@ -235,6 +237,40 @@ class TestIdm(unittest.TestCase):
         for row in range(rows):
             for column in range(columns):
                 self.assertEqual(ibx2[row, column], 2*ibx1[row, column])
+
+        return
+
+    def test_workflow1(self):
+
+        ts = tskit.load(Path(__file__).parent.absolute() / "tree-sequence.ts")
+        genomes = _idm.get_genomes(ts._ll_tree_sequence)
+        ibx, hashes, mapping = _idm.calculate_ibx(genomes)
+        prng = np.random.default_rng()
+        NUM_INDICES = 12
+        testids = prng.choice(np.asarray(range(genomes.shape[0]), dtype=np.uint32), size=NUM_INDICES, replace=False)
+        for row in testids:
+            irow = mapping[hashes[row]]
+            for col in testids:
+                icol = mapping[hashes[col]]
+                self.assertEqual(ibx[irow,icol], np.sum(genomes[row,:]==genomes[col,:]))
+                self.assertEqual(ibx[icol,irow], ibx[irow,icol])
+
+        return
+
+    def test_workflow2(self):
+
+        tc = tskit.load(Path(__file__).parent.absolute() / "tree-collection.ts")
+        genomes = _idm.get_genomes(tc._ll_tree_sequence)
+        ibx, hashes, mapping = _idm.calculate_ibx(genomes)
+        prng = np.random.default_rng()
+        NUM_INDICES = 12
+        testids = prng.choice(np.asarray(range(genomes.shape[0]), dtype=np.uint32), size=NUM_INDICES, replace=False)
+        for row in testids:
+            irow = mapping[hashes[row]]
+            for col in testids:
+                icol = mapping[hashes[col]]
+                self.assertEqual(ibx[irow,icol], np.sum(genomes[row,:]==genomes[col,:]))
+                self.assertEqual(ibx[icol,irow], ibx[irow,icol])
 
         return
 

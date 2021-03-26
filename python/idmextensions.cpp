@@ -56,32 +56,52 @@ traverse_recursive(tsk_tree_t *tree, uint8_t* genome, size_t stride, size_t inte
 
 PyArrayObject *allocate_array(tsk_treeseq_t *tree_sequence);
 
-PyObject *idm_get_genomes(tsk_treeseq_t *tree_sequence)
-{
-    tsk_tree_t tree;
-    tsk_tree_init(&tree, tree_sequence, 0);
-    PyArrayObject *array = allocate_array(tree_sequence);
+typedef struct {
+    PyObject_HEAD
+    tsk_treeseq_t *tree_sequence;
+} TreeSequence;
 
+PyObject *idm_get_genomes(PyObject *arg)
+{
+    tsk_treeseq_t *tree_sequence;
+    tsk_tree_t tree;
+
+    PyArrayObject *array = nullptr;
     int iter = 0;
     size_t current_interval = 0;
-    size_t elementsize = PyArray_ITEMSIZE(array);
-    uint8_t *pdata = (uint8_t*)PyArray_DATA(array);
-    size_t stride = PyArray_STRIDES(array)[0];
     size_t percent = 0;
-    clock_t start = clock();
+    clock_t start, end;
+
+    if ( std::string(arg->ob_type->tp_name) != "_tskit.TreeSequence" ) {
+        PyErr_Format(PyExc_RuntimeError, "Argument to get_genomes() must be a _tskit.TreeSequence - got '%s'.\n", arg->ob_type->tp_name);
+        goto out;
+    }
+
+    tree_sequence = ((TreeSequence *)arg)->tree_sequence;
+
+    if ( !tree_sequence ) {
+        PyErr_SetString(PyExc_RuntimeError, "TreeSequence is not initialized.\n");
+        goto out;
+    }
+
+    array = allocate_array(tree_sequence);
+
+    tsk_tree_init(&tree, tree_sequence, 0);
+    start = clock();
     for (iter = tsk_tree_first(&tree), current_interval = 0; iter == 1; iter = tsk_tree_next(&tree), ++current_interval) {
         progress(percent, current_interval, tree_sequence->num_trees, start);
-        if ( elementsize == sizeof(uint16_t) ) {
+        uint8_t *pdata = (uint8_t*)PyArray_DATA(array);
+        size_t stride = PyArray_STRIDES(array)[0];
+        if ( PyArray_ITEMSIZE(array) == sizeof(uint16_t) ) {
             traverse_recursive<uint16_t>(&tree, pdata, stride, current_interval);
         } else {
             traverse_recursive<uint32_t>(&tree, pdata, stride, current_interval);
         }
     }
-    clock_t end = clock();
+    end = clock();
     printf("Recursive traversal of all trees took %f seconds\n", double(end - start) / CLOCKS_PER_SEC);
 
-    Py_XDECREF(array);
-
+out:
     return (PyObject *)array;
 }
 

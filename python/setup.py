@@ -61,7 +61,7 @@ _idm_module = Extension(
     name="_idm",
     sources=["_idmmodule.cpp", "idmextensions.cpp", "sha256.cpp"]
     + [os.path.join(libdir, "tskit", f) for f in tsk_source_files]
-    + [os.path.join(kastore_dir, "kastore.c")],
+    + ["kastore.cpp"],
     include_dirs=[libdir, kastore_dir],
     define_macros=defines,
     # undef_macros=
@@ -69,7 +69,7 @@ _idm_module = Extension(
     libraries=libraries,
     # runtime_library_dirs=
     # extra_objects=
-    extra_compile_args=["-msse3", "-mavx2", "-O3"], # "-std=c++11"],
+    extra_compile_args=["-msse3", "-mavx2", "-O3", "-std=c++11"],
     # extra_link_args=
     # export_symbols=
     depends=["_idmmodule.cpp", "idmextensions.h", "idmextensions.cpp", "sha256.h", "sha256.cpp"],

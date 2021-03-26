@@ -68,3 +68,11 @@ for y in range(2):
         print(f"{y}:{x} = {np.sum(gen[y,:] == gen[x,:])}")
 
 """
+
+"""
+python3
+import tskit, _idm
+ts = tskit.load("tree-sequence.ts")
+g = _idm.get_genomes(ts._ll_tree_sequence)
+ibx, hashes, mapping = _idm.calculate_ibx(g)
+"""

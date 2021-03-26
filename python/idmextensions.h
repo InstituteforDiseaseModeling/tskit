@@ -7,5 +7,5 @@
 
 #include "tskit.h"
 
-PyObject *idm_get_genomes(tsk_treeseq_t *tree_sequence);
+PyObject *idm_get_genomes(PyObject *args);
 PyObject *idm_calculate_ibx(PyObject *args);

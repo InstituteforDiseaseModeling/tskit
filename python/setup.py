@@ -69,7 +69,7 @@ _idm_module = Extension(
     libraries=libraries,
     # runtime_library_dirs=
     # extra_objects=
-    extra_compile_args=["-msse3", "-mavx2", "-O3", "-std=c++11"],
+    extra_compile_args=["-msse3", "-mavx2", "-O3"], #, "-std=c++11"],
     # extra_link_args=
     # export_symbols=
     depends=["_idmmodule.cpp", "idmextensions.h", "idmextensions.cpp", "sha256.h", "sha256.cpp"],

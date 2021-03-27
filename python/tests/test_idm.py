@@ -6,7 +6,7 @@ from pathlib import Path
 import unittest
 
 import tskit
-import _idm
+import idm
 
 NUM_GENOMES = 1024
 NUM_INTERVALS = 65536
@@ -23,7 +23,7 @@ class TestIdm(unittest.TestCase):
         NUM_INDICES = 12
         indices = np.asarray(range(NUM_INDICES), dtype=np.uint32)
 
-        ibx, hashes, mapping = _idm.calculate_ibx(gen08, indices)
+        ibx, hashes, mapping = idm.calculate_ibx(gen08, indices)
 
         self.assertEqual(ibx.shape, (NUM_INDICES, NUM_INDICES))
         self.assertEqual(len(hashes), NUM_INDICES)
@@ -47,7 +47,7 @@ class TestIdm(unittest.TestCase):
         indices.sort()
         print(f"{indices=}")
 
-        ibx, hashes, mapping = _idm.calculate_ibx(gen08, indices)
+        ibx, hashes, mapping = idm.calculate_ibx(gen08, indices)
 
         self.assertEqual(ibx.shape, (NUM_INDICES, NUM_INDICES))
         self.assertEqual(len(hashes), NUM_INDICES)
@@ -76,10 +76,10 @@ class TestIdm(unittest.TestCase):
         indices.sort()
         print(f"{indices=}")
 
-        ibx1, hashes1, mapping1 = _idm.calculate_ibx(gen08, indices)     # intervals == 1 by default
+        ibx1, hashes1, mapping1 = idm.calculate_ibx(gen08, indices)     # intervals == 1 by default
 
         intervals = np.ones(NUM_INTERVALS, dtype=np.uint32) * 2
-        ibx2, hashes2, mapping2 = _idm.calculate_ibx(gen08, indices, intervals)
+        ibx2, hashes2, mapping2 = idm.calculate_ibx(gen08, indices, intervals)
 
         self.assertTupleEqual(ibx2.shape, ibx1.shape)
         self.assertListEqual(hashes2, hashes1)
@@ -97,7 +97,7 @@ class TestIdm(unittest.TestCase):
         NUM_INDICES = 12
         indices = np.asarray(range(NUM_INDICES), dtype=np.uint32)
 
-        ibx, hashes, mapping = _idm.calculate_ibx(gen16, indices)
+        ibx, hashes, mapping = idm.calculate_ibx(gen16, indices)
 
         self.assertEqual(ibx.shape, (NUM_INDICES, NUM_INDICES))
         self.assertEqual(len(hashes), NUM_INDICES)
@@ -121,7 +121,7 @@ class TestIdm(unittest.TestCase):
         indices.sort()
         print(f"{indices=}")
 
-        ibx, hashes, mapping = _idm.calculate_ibx(gen16, indices)
+        ibx, hashes, mapping = idm.calculate_ibx(gen16, indices)
 
         self.assertEqual(ibx.shape, (NUM_INDICES, NUM_INDICES))
         self.assertEqual(len(hashes), NUM_INDICES)
@@ -150,10 +150,10 @@ class TestIdm(unittest.TestCase):
         indices.sort()
         print(f"{indices=}")
 
-        ibx1, hashes1, mapping1 = _idm.calculate_ibx(gen16, indices)     # intervals == 1 by default
+        ibx1, hashes1, mapping1 = idm.calculate_ibx(gen16, indices)     # intervals == 1 by default
 
         intervals = np.ones(NUM_INTERVALS, dtype=np.uint32) * 2
-        ibx2, hashes2, mapping2 = _idm.calculate_ibx(gen16, indices, intervals)
+        ibx2, hashes2, mapping2 = idm.calculate_ibx(gen16, indices, intervals)
 
         self.assertTupleEqual(ibx2.shape, ibx1.shape)
         self.assertListEqual(hashes2, hashes1)
@@ -171,7 +171,7 @@ class TestIdm(unittest.TestCase):
         NUM_INDICES = 12
         indices = np.asarray(range(NUM_INDICES), dtype=np.uint32)
 
-        ibx, hashes, mapping = _idm.calculate_ibx(gen32, indices)
+        ibx, hashes, mapping = idm.calculate_ibx(gen32, indices)
 
         self.assertEqual(ibx.shape, (NUM_INDICES, NUM_INDICES))
         self.assertEqual(len(hashes), NUM_INDICES)
@@ -195,7 +195,7 @@ class TestIdm(unittest.TestCase):
         indices.sort()
         print(f"{indices=}")
 
-        ibx, hashes, mapping = _idm.calculate_ibx(gen32, indices)
+        ibx, hashes, mapping = idm.calculate_ibx(gen32, indices)
 
         self.assertEqual(ibx.shape, (NUM_INDICES, NUM_INDICES))
         self.assertEqual(len(hashes), NUM_INDICES)
@@ -224,10 +224,10 @@ class TestIdm(unittest.TestCase):
         indices.sort()
         print(f"{indices=}")
 
-        ibx1, hashes1, mapping1 = _idm.calculate_ibx(gen32, indices)     # intervals == 1 by default
+        ibx1, hashes1, mapping1 = idm.calculate_ibx(gen32, indices)     # intervals == 1 by default
 
         intervals = np.ones(NUM_INTERVALS, dtype=np.uint32) * 2
-        ibx2, hashes2, mapping2 = _idm.calculate_ibx(gen32, indices, intervals)
+        ibx2, hashes2, mapping2 = idm.calculate_ibx(gen32, indices, intervals)
 
         self.assertTupleEqual(ibx2.shape, ibx1.shape)
         self.assertListEqual(hashes2, hashes1)
@@ -242,9 +242,9 @@ class TestIdm(unittest.TestCase):
 
     def test_workflow1(self):
 
-        ts = tskit.load(Path(__file__).parent.absolute() / "tree-sequence.ts")
-        genomes = _idm.get_genomes(ts._ll_tree_sequence)
-        ibx, hashes, mapping = _idm.calculate_ibx(genomes)
+        ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
+        genomes = idm.get_genomes(ts)
+        ibx, hashes, mapping = idm.calculate_ibx(genomes)
         prng = np.random.default_rng()
         NUM_INDICES = 12
         testids = prng.choice(np.asarray(range(genomes.shape[0]), dtype=np.uint32), size=NUM_INDICES, replace=False)
@@ -259,9 +259,9 @@ class TestIdm(unittest.TestCase):
 
     def test_workflow2(self):
 
-        tc = tskit.load(Path(__file__).parent.absolute() / "tree-collection.ts")
-        genomes = _idm.get_genomes(tc._ll_tree_sequence)
-        ibx, hashes, mapping = _idm.calculate_ibx(genomes)
+        tc = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-collection.ts")
+        genomes = idm.get_genomes(tc)
+        ibx, hashes, mapping = idm.calculate_ibx(genomes)
         prng = np.random.default_rng()
         NUM_INDICES = 12
         testids = prng.choice(np.asarray(range(genomes.shape[0]), dtype=np.uint32), size=NUM_INDICES, replace=False)
@@ -273,6 +273,76 @@ class TestIdm(unittest.TestCase):
                 self.assertEqual(ibx[icol,irow], ibx[irow,icol])
 
         return
+
+
+class TestIbxResults(unittest.TestCase):
+
+    genome = None
+
+    @classmethod
+    def setUpClass(cls):
+        ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
+        TestIbxResults.genome = idm.get_genomes(ts)
+        return
+
+    def test_happy_path_no_indices_no_intervals(self):
+        return
+
+    def test_happy_path_yes_indices_no_interfvals(self):
+        return
+
+    def test_happy_path_no_indices_yes_intervals(self):
+        return
+
+    def test_happy_path_yes_indices_yes_intervals(self):
+        return
+
+    def test_with_indices_list(self):
+        return
+
+    def test_with_indices_tuple(self):
+        return
+
+    def test_with_indices_float(self):
+        return
+
+    def test_with_intervals_list(self):
+        return
+
+    def test_with_intervals_tuple(self):
+        return
+
+    def test_with_intervals_float(self):
+        return
+
+    def test_bad_genome_type(self):
+        return
+
+    def test_bad_genome_shape(self):
+        return
+
+    def test_bad_genome_dtype(self):
+        return
+
+    def test_bad_indices_shape(self):
+        return
+
+    def test_bad_intervals_shape(self):
+        return
+
+    def test_get_item_with_slice(self):
+        return
+
+    def test_get_item_with_tuple(self):
+        return
+
+    def test_get_item_with_bad_indexa(self):
+        return
+
+    def test_get_item_width_bad_indexb(self):
+        return
+
+
 
 
 if __name__ == "__main__":

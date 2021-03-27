@@ -110,7 +110,7 @@ setup(
         "Programming Language :: Python :: 3 :: Only",
     ],
     keywords="tree sequence",
-    packages=["tskit"],
+    packages=["tskit", "idm"],
     include_package_data=True,
     ext_modules=[_tskit_module, _idm_module],
     install_requires=[

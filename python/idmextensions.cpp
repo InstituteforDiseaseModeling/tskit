@@ -16,20 +16,19 @@
 #include <emmintrin.h>
 #include <immintrin.h>
 
+#if 0
+#define DPRINT(_s_)        printf(_s_)
+#define DPRINTFMT(_f_, args...)  printf(_f_, args)
+#else
+#define DPRINT(_s_)
+#define DPRINTFMT(_f, args...)
+#endif
+
 #define IDM_ALIGNMENT   32
 
-/********* Utility function ********/
-
-void progress(size_t& percent, size_t current, size_t total, clock_t start)
-{
-    if ( 100 * current / total > percent ) {
-        percent = 100 * current / total;
-        clock_t now = clock();
-        double elapsed = now - start;
-        double remaining = ((double(total) / current - 1) * elapsed) / CLOCKS_PER_SEC;
-        std::cout << percent << "% complete, ETA " << remaining << " seconds." << std::endl;
-    }
-}
+void progress(size_t& percent, size_t current, size_t total, clock_t start);
+PyArrayObject* allocate_aligned_1d(size_t num_elements, size_t itemsize, void* indata, int type);
+PyArrayObject* allocate_aligned_2d(size_t num_rows, size_t num_columns, size_t itemsize, void* indata, size_t instride, int type);
 
 /********* Align NumPy Array *********/
 
@@ -41,24 +40,12 @@ PyObject *idm_align_data(PyObject *arg)
     PyArrayObject* aligned = nullptr;
     
     if ( array ) {
-        uint8_t* pdata;
-        size_t num_rows = PyArray_DIMS(array)[0];
-        size_t outstride = (PyArray_DIMS(array)[1] * PyArray_ITEMSIZE(array) + IDM_ALIGNMENT - 1) & ~(IDM_ALIGNMENT - 1);
-        size_t total_bytes = num_rows * outstride;
-        posix_memalign((void**)&pdata, IDM_ALIGNMENT, total_bytes);
-
-        printf("incoming array shape is (%ld, %ld)\n", PyArray_DIMS(array)[0], PyArray_DIMS(array)[1]);
-        printf("allocated %ld bytes aligned on %d byte boundary (%p), stride is %ld bytes\n", total_bytes, IDM_ALIGNMENT, pdata, outstride);
-
-        npy_intp outstrides[2] = { static_cast<npy_intp>(outstride), PyArray_ITEMSIZE(array) };
-        int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
-        aligned = (PyArrayObject*)PyArray_New(&PyArray_Type, PyArray_NDIM(array), PyArray_DIMS(array), PyArray_TYPE(array), outstrides, pdata, PyArray_ITEMSIZE(array), flags, nullptr);
-
-        uint8_t* indata = (uint8_t*)PyArray_DATA(array);
-        size_t instride = (size_t)PyArray_STRIDES(array)[0];
-        for ( size_t row = 0; row < (size_t)PyArray_DIMS(array)[0]; ++row ) {
-            memcpy(pdata + row * outstride, indata + row * instride, PyArray_DIMS(array)[1] * PyArray_ITEMSIZE(array));
-        }
+        aligned = allocate_aligned_2d(PyArray_DIMS(array)[0],
+                                      PyArray_DIMS(array)[1],
+                                      PyArray_ITEMSIZE(array),
+                                      PyArray_DATA(array),
+                                      PyArray_STRIDES(array)[0],
+                                      PyArray_TYPE(array));
     }
     else {
         PyErr_SetString(PyExc_ValueError, "argument must be a two dimensional NumPy array");
@@ -125,6 +112,7 @@ PyObject *idm_get_genomes(PyObject *arg)
     size_t current_interval = 0;
     size_t percent = 0;
     clock_t start, end;
+    float elapsed;
 
     if ( std::string(arg->ob_type->tp_name) != "_tskit.TreeSequence" ) {
         PyErr_Format(PyExc_RuntimeError, "Argument to get_genomes() must be a _tskit.TreeSequence - got '%s'.\n", arg->ob_type->tp_name);
@@ -153,7 +141,8 @@ PyObject *idm_get_genomes(PyObject *arg)
         }
     }
     end = clock();
-    printf("Recursive traversal of all trees took %f seconds\n", double(end - start) / CLOCKS_PER_SEC);
+    elapsed = float(end - start) / CLOCKS_PER_SEC;
+    DPRINTFMT("Recursive traversal of all trees took %f seconds\n", elapsed);
 
 out:
     return (PyObject *)array;
@@ -163,50 +152,20 @@ size_t get_elementsize(tsk_tree_t *tree);
 
 PyArrayObject *allocate_array(tsk_treeseq_t *tree_sequence)
 {
+    PyArrayObject* array = nullptr;
     tsk_tree_t tree;
     tsk_tree_init(&tree, tree_sequence, 0);
     tsk_tree_first(&tree);
 
-    tsk_size_t num_nodes = tree.num_nodes;              // rows/genomes
-    tsk_size_t num_trees = tree_sequence->num_trees;    // columns/intervals
-    printf("# nodes = .. %d\n", num_nodes);
-    printf("# trees =    %d\n", num_trees);
-
-    int ndims = 2;
-    npy_intp dims[2] = { num_nodes, num_trees };    // { #rows, #columns }
+    tsk_size_t num_rows    = tree.num_nodes;
+    tsk_size_t num_columns = tree_sequence->num_trees;
+    DPRINTFMT("# nodes = .. %d\n", num_rows);
+    DPRINTFMT("# trees =    %d\n", num_columns);
 
     size_t elementsize = get_elementsize(&tree);
     int typenum = elementsize == 2 ? NPY_UINT16 : NPY_UINT32;
 
-    size_t stride = (num_trees * elementsize + (IDM_ALIGNMENT - 1)) & ~(IDM_ALIGNMENT - 1);
-    printf("stride = ... %ld\n", stride);
-    // Note that in C order, the first (index 0) dimension is rows, so it is the full stride
-    // The second (index 1) dimension is columns, so it is just the element size
-    npy_intp strides[2] = { static_cast<npy_intp>(stride), static_cast<npy_intp>(elementsize) };
-
-    size_t total_bytes = num_nodes * stride;
-    void *pdata;
-    // https://stackoverflow.com/a/6563142 - posix_memalign() rather than allocate_aligned()
-    posix_memalign(&pdata, IDM_ALIGNMENT, total_bytes);
-    printf("bytes =      %ld\n", total_bytes);
-    printf("pdata = .... %p\n", pdata);
-
-    // https://stackoverflow.com/a/58001107 - NPY_ARRAY_OWNDATA should tell Numpy to free(pdata) when appropriate
-    int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
-
-    PyArrayObject *array = (PyArrayObject *)PyArray_New(&PyArray_Type, ndims, dims, typenum, strides, pdata, elementsize, flags, nullptr);
-
-    printf("NDIM =       %d\n", PyArray_NDIM(array));
-    for ( int i = 0; i < PyArray_NDIM(array); ++i )
-        printf("    DIM[%d] = %ld\n", i, PyArray_DIMS(array)[i]);
-    printf("FLAGS = .... 0x%08X\n", PyArray_FLAGS(array));
-    printf("TYPE =       %d\n", PyArray_TYPE(array));
-    printf("DATA = ..... %p\n", PyArray_DATA(array));
-    printf("ITEMSIZE =   %ld\n", PyArray_ITEMSIZE(array));
-    printf("SIZE = ..... %ld\n", PyArray_SIZE(array));
-    printf("NBYTES =     %ld\n", PyArray_NBYTES(array));
-    for ( int i = 0; i < PyArray_NDIM(array); ++i )
-        printf("    STRIDE[%d] = %ld\n", i, PyArray_STRIDES(array)[i]);
+    array = allocate_aligned_2d((size_t)num_rows, (size_t)num_columns, elementsize, nullptr, 0, typenum);
 
     return array;
 }
@@ -221,7 +180,7 @@ size_t get_elementsize(tsk_tree_t *tree)
         }
     }
 
-    printf("sizeof(id) = %ld\n", size);
+    DPRINTFMT("sizeof(id) = %ld\n", size);
     return size;
 }
 
@@ -263,7 +222,7 @@ PyObject *idm_calculate_ibx(PyObject *args)
                                                          (PyObject *)&ndvectorintervals) )
         goto out;
 
-    printf("In calculate_ibx...(%p, %p, %p)\n", ndarraygenomes, ndvectorids, ndvectorintervals);
+    DPRINTFMT("In calculate_ibx...(%p, %p, %p)\n", ndarraygenomes, ndvectorids, ndvectorintervals);
 
     // Validate arguments
     {
@@ -298,7 +257,7 @@ PyObject *idm_calculate_ibx(PyObject *args)
 
         // ndvectorids is None or one dimension (vector) of uint32_t, <= #rows of ndarraygenomes
         if ( (PyObject *)ndvectorids == Py_None ) {
-            printf("ndvectorids == Py_None, setting to NULL\n");
+            DPRINT("ndvectorids == Py_None, setting to NULL\n");
             ndvectorids = nullptr;
         }
         if ( ndvectorids ) {
@@ -309,7 +268,7 @@ PyObject *idm_calculate_ibx(PyObject *args)
                        PyErr_SetString(PyExc_RuntimeError, "Genome IDs must be a one dimensional vector of uint32 <= #rows in genome array.\n");
                        goto out;
                    }
-            printf("ndvectorids passed validation, incrementing refcount (ndvectorids[1] == %d)\n", ((uint32_t*)PyArray_DATA(ndvectorids))[1]);
+            DPRINTFMT("ndvectorids passed validation, incrementing refcount (ndvectorids[1] == %d)\n", ((uint32_t*)PyArray_DATA(ndvectorids))[1]);
             Py_XINCREF(ndvectorids);
         } else {
             npy_intp length = PyArray_DIMS(ndarraygenomes)[0];
@@ -318,12 +277,12 @@ PyObject *idm_calculate_ibx(PyObject *args)
             for (uint32_t id = 0; id < length; ++id) {
                 *pid++ = id;
             }
-            printf("ndvectorids was NULL, allocated 'identity' vector (%d)\n", ((uint32_t *)PyArray_DATA(ndvectorids))[8]);
+            DPRINTFMT("ndvectorids was NULL, allocated 'identity' vector (%d)\n", ((uint32_t *)PyArray_DATA(ndvectorids))[8]);
         }
 
         // ndvectorintervals is None or one dimension (vector) of uint32_t, == #columns of ndarraygenomes
         if ( (PyObject *)ndvectorintervals == Py_None ) {
-            printf("ndvectorintervals == Py_None, setting to NULL\n");
+            DPRINT("ndvectorintervals == Py_None, setting to NULL\n");
             ndvectorintervals = nullptr;
         }
         if ( ndvectorintervals ) {
@@ -334,16 +293,24 @@ PyObject *idm_calculate_ibx(PyObject *args)
                        PyErr_SetString(PyExc_RuntimeError, "Interval lengths must be a one dimensional vector of uint32 == #columns in genome array.\n");
                        goto out;
                    }
-            printf("ndvectorintervals passed validation, incrementing refcount (ndvectorintervals[1] == %d)\n", ((uint32_t*)PyArray_DATA(ndvectorintervals))[1]);
-            Py_XINCREF(ndvectorintervals);
-        } else {
-            npy_intp length = PyArray_DIMS(ndarraygenomes)[1];
-            ndvectorintervals = (PyArrayObject *)PyArray_ZEROS(1, &length, NPY_UINT32, false);
-            uint32_t *pinterval = (uint32_t *)PyArray_DATA(ndvectorintervals);
-            for (uint32_t i = 0; i < length; ++i) {
-                *pinterval++ = 1;
+            if ( (((size_t)PyArray_DATA(ndvectorintervals)) & (IDM_ALIGNMENT-1)) == 0 ) { // ndvectorintervals data is appropriately aligned
+                DPRINT("Incoming ndvectorintervals is appropriately aligned, incrementing refcount.\n");
+                Py_XINCREF(ndvectorintervals);  // Offset Py_XDECREF below.
             }
-            printf("ndvectorintervals was NULL, allocated 'ones' vector (%d)\n", ((uint32_t *)PyArray_DATA(ndvectorintervals))[8]);
+            else {  // ndvectorintervals data is _not_ appropriately aligned
+                DPRINT("Incoming ndvectorintervals is NOT appropriately aligned, copy to temporary, aligned array.\n");
+                ndvectorintervals = allocate_aligned_1d(PyArray_DIMS(ndvectorintervals)[0], sizeof(uint32_t), PyArray_DATA(ndvectorintervals), NPY_UINT32);
+                // Py_XDECREF below will release this temporary object.
+            }
+        } else {
+            DPRINT("Incoming ndvectorintervals is None, creating temporary, aligned array of ones.\n");
+            size_t count = PyArray_DIMS(ndarraygenomes)[1];
+            ndvectorintervals = allocate_aligned_1d(count, sizeof(uint32_t), nullptr, NPY_UINT32);
+            uint32_t* pdata = (uint32_t*)PyArray_DATA(ndvectorintervals);
+            for ( size_t i = 0; i < count; ++i ) {
+                pdata[i] = 1;
+            }
+            // Py_XDECREF below will release this temporary object.
         }
     }
 
@@ -363,6 +330,8 @@ PyObject *idm_calculate_ibx(PyObject *args)
         default:
             break;
     }
+
+    Py_XDECREF(ndvectorintervals);
 
 out:
     // Tuple of (NxN calculated values, sorted list of unique hash values, hash value->index map)
@@ -395,7 +364,7 @@ _calculate_ibx(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObject *nd
                PyArrayObject *&ndibx, PyObject *&digests, PyObject *&mapping,
                simd_comp_t inner_loop_fn)
 {
-    printf("In calculate_ibx()...\n");
+    DPRINT("In calculate_ibx()...\n");
     size_t num_rows      = 0;
     size_t num_intervals = 0;
 
@@ -444,13 +413,13 @@ _calculate_ibx(PyArrayObject *ndgenomes, PyArrayObject *ndids, PyArrayObject *nd
 void get_stats(PyArrayObject* ndgenomes, PyArrayObject* ndids,
                size_t &num_rows, size_t& num_intervals, uint32_t*& pids, uint8_t*& pdata, size_t& stride, size_t& bytes)
 {
-    num_rows      = PyArray_DIMS(ndids ? ndids : ndgenomes)[0];          printf("num_rows      = %ld\n", num_rows);
-    num_intervals = PyArray_DIMS(ndgenomes)[1];                          printf("num_intervals = %ld\n", num_intervals);
+    num_rows      = PyArray_DIMS(ndids ? ndids : ndgenomes)[0];          DPRINTFMT("num_rows      = %ld\n", num_rows);
+    num_intervals = PyArray_DIMS(ndgenomes)[1];                          DPRINTFMT("num_intervals = %ld\n", num_intervals);
 
     pids   = (uint32_t*)PyArray_DATA(ndids);
     pdata  = (uint8_t*)PyArray_DATA(ndgenomes);
-    stride = PyArray_STRIDES(ndgenomes)[0];                              printf("stride/genome = %ld\n", stride);
-    bytes  = PyArray_DIMS(ndgenomes)[1] * PyArray_ITEMSIZE(ndgenomes);   printf("bytes/genome  = %ld\n", bytes);
+    stride = PyArray_STRIDES(ndgenomes)[0];                              DPRINTFMT("stride/genome = %ld\n", stride);
+    bytes  = PyArray_DIMS(ndgenomes)[1] * PyArray_ITEMSIZE(ndgenomes);   DPRINTFMT("bytes/genome  = %ld\n", bytes);
 
     return;
 }
@@ -491,7 +460,7 @@ void get_unique_hash_values(std::vector<std::string>& hashes, size_t& num_unique
     std::sort(sorted.begin(), sorted.end());
 
     num_unique = unique.size();
-    std::cout << num_unique << " unique hash values" << std::endl;
+    DPRINTFMT("%ld unique hash values\n", num_unique);
 
     // Map each hash value to its position in the sorted list of unique hash values.
     for ( size_t i = 0; i < sorted.size(); ++i ) {
@@ -526,11 +495,11 @@ void calculate_block_size(size_t bytes, size_t num_rows, size_t& block_size, siz
     // Figure out how many genomes fit in the CPU cache.
     size_t cache_size = 19.25 * 1024 * 1024;    // 19.25MB L3 cache on Intel(R) Xeon(R) Gold 6126 CPU
     size_t num_genomes = cache_size / bytes;
-    std::cout << "num_genomes in 19.25MB cache is " << num_genomes << std::endl;
+    DPRINTFMT("num_genomes in 19.25MB cache is %ld\n", num_genomes);
     block_size = size_t(sqrt(num_genomes));
-    std::cout << "block_size is " << block_size << " square." << std::endl;
+    DPRINTFMT("block_size is %ld x %ld genomes.\n", block_size, block_size);
     num_blocks = (num_rows + block_size - 1) / block_size;
-    std::cout << "num_blocks is " << num_blocks << std::endl;
+    DPRINTFMT("num_blocks is %ld\n", num_blocks);
 
     return;
 }
@@ -637,23 +606,29 @@ void inner_loop16(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
 
 void inner_loop08(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride, size_t xgenome, size_t num_intervals, size_t yibx, size_t xibx, uint32_t* pintervals, size_t num_unique, uint32_t* ibx)
 {
-    __m256i eightFifteen = _mm256_set_epi8( 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,     // zero all these
-                                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,     // zero all these
-                                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,     // zero all these
-                                            0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08);    // shuffle 8..15 -> 0..7
-    __m256i twentyFourthirtyOne = _mm256_set_epi8( 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,     // zero all these
-                                                   0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08,     // shuffle 24..31 -> 16..23
-                                                   0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,     // zero all these
-                                                   0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80);    // zero all these
+    __m256i eightFifteen = _mm256_set_epi8( 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,         // zero all these
+                                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,         // zero all these
+                                            0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,         // zero all these
+                                            0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08);        // shuffle 8..15 -> 0..7
 
-    uint32_t ibx_for_pair = 0;                                      // IBD is _always_ uint32_t
-    uint8_t* genomea = (uint8_t*)(pdata + pids[ygenome] * stride);  // GENOME in _this function_ is uint8_t
-    uint8_t* genomeb = (uint8_t*)(pdata + pids[xgenome] * stride);  // GENOME in _this function_ is uint8_t
+    __m256i twentyFourthirtyOne = _mm256_set_epi8( 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,  // zero all these
+                                                   0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08,  // shuffle 24..31 -> 16..23
+                                                   0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,  // zero all these
+                                                   0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80); // zero all these
+
+    uint32_t ibx_for_pair = 0;                                                          // IBD is _always_ uint32_t
+    uint8_t* genomea = (uint8_t*)(pdata + pids[ygenome] * stride);                      // GENOME in _this function_ is uint8_t
+    uint8_t* genomeb = (uint8_t*)(pdata + pids[xgenome] * stride);                      // GENOME in _this function_ is uint8_t
+
+    DPRINTFMT("inner_loop08: pdata = %p, pids = %p, ygenome = %ld, stride = %ld, xgenome = %ld, num_intervals = %ld, yibx = %ld, xibx = %ld\n", pdata, pids, ygenome, stride, xgenome, num_intervals, yibx, xibx);
+    DPRINTFMT("inner_loop08: pintervals = %p, num_unique = %ld, ibx = %p\n", pintervals, num_unique, ibx);
+    DPRINTFMT("inner_loop08: genomea = %p, genomeb = %p\n", genomea, genomeb);
+
     size_t num_simd = num_intervals & ~31;
     for ( size_t simd = 0; simd < num_simd; simd += 32 ) {
-        __m256i ga    = _mm256_load_si256((const __m256i*)(genomea + simd));  // load 32x uint8_t
-        __m256i gb    = _mm256_load_si256((const __m256i*)(genomeb + simd));  // load 32x uint8_t
-        __m256i eq    = _mm256_cmpeq_epi8(ga, gb);                          // compare each each entry, equal -> 0xFF, not equal -> 0x00
+        __m256i ga    = _mm256_load_si256((const __m256i*)(genomea + simd));            // load 32x uint8_t
+        __m256i gb    = _mm256_load_si256((const __m256i*)(genomeb + simd));            // load 32x uint8_t
+        __m256i eq    = _mm256_cmpeq_epi8(ga, gb);                                      // compare each each entry, equal -> 0xFF, not equal -> 0x00
         __m256i span0 = _mm256_load_si256((const __m256i*)(pintervals + simd));         // load 8x spans
         __m256i span1 = _mm256_load_si256((const __m256i*)(pintervals + simd +  8));    // load 8x spans
         __m256i span2 = _mm256_load_si256((const __m256i*)(pintervals + simd + 16));    // load 8x spans
@@ -688,3 +663,93 @@ void inner_loop08(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
 
     return;
 }
+
+/********* Utility functions ********/
+
+void progress(size_t& percent, size_t current, size_t total, clock_t start)
+{
+    if ( 100 * current / total > percent ) {
+        percent = 100 * current / total;
+        clock_t now = clock();
+        double elapsed = now - start;
+        double remaining = ((double(total) / current - 1) * elapsed) / CLOCKS_PER_SEC;
+        std::cout << percent << "% complete, ETA " << remaining << " seconds." << std::endl;
+    }
+}
+
+PyArrayObject* allocate_aligned_1d(size_t num_elements, size_t itemsize, void* indata, int type)
+{
+    PyArrayObject* aligned = nullptr;
+    uint8_t* pdata = nullptr;
+
+    DPRINTFMT("incoming array shape is %ld elements\n", num_elements);
+
+    size_t num_bytes = (size_t)num_elements * itemsize;
+    posix_memalign((void**)&pdata, IDM_ALIGNMENT, num_bytes);
+
+    DPRINTFMT("allocated %ld bytes aligned on %d byte boundary: %p\n", num_bytes, IDM_ALIGNMENT, pdata);
+
+    if ( indata ) {
+        memcpy(pdata, indata, num_bytes);
+    }
+    else {
+        memset((void*)pdata, 0, num_bytes);
+    }
+
+    npy_intp count = num_elements;
+    int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
+    aligned = (PyArrayObject*)PyArray_New(&PyArray_Type, 1, &count, type, /*strides*/nullptr, pdata, static_cast<npy_intp>(itemsize), flags, /*obj*/nullptr);
+
+    DPRINTFMT("DIM[0] =     %d\n", PyArray_DIMS(aligned)[0]);
+    DPRINTFMT("FLAGS = .... 0x%08X\n", PyArray_FLAGS(aligned));
+    DPRINTFMT("TYPE =       %d\n", PyArray_TYPE(aligned));
+    DPRINTFMT("DATA = ..... %p\n", PyArray_DATA(aligned));
+    DPRINTFMT("ITEMSIZE =   %ld\n", PyArray_ITEMSIZE(aligned));
+    DPRINTFMT("SIZE = ..... %ld\n", PyArray_SIZE(aligned));
+    DPRINTFMT("NBYTES =     %ld\n", PyArray_NBYTES(aligned));
+
+    return aligned;
+}
+
+PyArrayObject* allocate_aligned_2d(size_t num_rows, size_t num_columns, size_t itemsize, void* indata, size_t instride, int type)
+{
+    PyArrayObject* aligned = nullptr;
+    uint8_t* pdata = nullptr;
+
+    DPRINTFMT("incoming array shape is (%ld, %ld)\n", num_rows, num_columns);
+
+    size_t outstride = (num_columns * itemsize + IDM_ALIGNMENT - 1) & ~(IDM_ALIGNMENT - 1);
+    size_t total_bytes = num_rows * outstride;
+    posix_memalign((void**)&pdata, IDM_ALIGNMENT, total_bytes);
+
+    DPRINTFMT("allocated %ld bytes aligned on %d byte boundary: %p, stride is %ld bytes\n", total_bytes, IDM_ALIGNMENT, pdata, outstride);
+
+    if ( indata ) {
+        for ( size_t row = 0; row < num_rows; ++row ) {
+            memcpy(pdata + row * outstride, ((uint8_t*)indata) + row * instride, num_columns * itemsize);
+        }
+    }
+    else {
+        memset((void*)pdata, 0, total_bytes);
+    }
+
+    npy_intp dimensions[2] = { static_cast<npy_intp>(num_rows), static_cast<npy_intp>(num_columns) };
+    npy_intp outstrides[2] = { static_cast<npy_intp>(outstride), static_cast<npy_intp>(itemsize) };
+    int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
+    aligned = (PyArrayObject*)PyArray_New(&PyArray_Type, 2, dimensions, type, outstrides, (void*)pdata, static_cast<npy_intp>(itemsize), flags, /*obj*/nullptr);
+
+    DPRINTFMT("NDIM =       %d\n", PyArray_NDIM(aligned));
+    for ( int i = 0; i < PyArray_NDIM(aligned); ++i )
+        DPRINTFMT("    DIM[%d] = %ld\n", i, PyArray_DIMS(aligned)[i]);
+    DPRINTFMT("FLAGS = .... 0x%08X\n", PyArray_FLAGS(aligned));
+    DPRINTFMT("TYPE =       %d\n", PyArray_TYPE(aligned));
+    DPRINTFMT("DATA = ..... %p\n", PyArray_DATA(aligned));
+    DPRINTFMT("ITEMSIZE =   %ld\n", PyArray_ITEMSIZE(aligned));
+    DPRINTFMT("SIZE = ..... %ld\n", PyArray_SIZE(aligned));
+    DPRINTFMT("NBYTES =     %ld\n", PyArray_NBYTES(aligned));
+    for ( int i = 0; i < PyArray_NDIM(aligned); ++i )
+        DPRINTFMT("    STRIDE[%d] = %ld\n", i, PyArray_STRIDES(aligned)[i]);
+
+    return aligned;
+}
+

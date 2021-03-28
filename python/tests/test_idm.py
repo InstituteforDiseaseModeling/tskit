@@ -12,9 +12,9 @@ NUM_GENOMES = 1024
 NUM_INTERVALS = 65536
 NUM_ROOTS = 8
 prng = np.random.default_rng()
-gen08 = prng.integers(0, high=NUM_ROOTS, size=(NUM_GENOMES, NUM_INTERVALS), dtype=np.uint8)
-gen16 = prng.integers(0, high=NUM_ROOTS, size=(NUM_GENOMES, NUM_INTERVALS), dtype=np.uint16)
-gen32 = prng.integers(0, high=NUM_ROOTS, size=(NUM_GENOMES, NUM_INTERVALS), dtype=np.uint32)
+gen08 = idm.align_data(prng.integers(0, high=NUM_ROOTS, size=(NUM_GENOMES, NUM_INTERVALS), dtype=np.uint8))
+gen16 = idm.align_data(prng.integers(0, high=NUM_ROOTS, size=(NUM_GENOMES, NUM_INTERVALS), dtype=np.uint16))
+gen32 = idm.align_data(prng.integers(0, high=NUM_ROOTS, size=(NUM_GENOMES, NUM_INTERVALS), dtype=np.uint32))
 
 class TestIdm(unittest.TestCase):
 

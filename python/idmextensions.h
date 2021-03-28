@@ -8,4 +8,5 @@
 #include "tskit.h"
 
 PyObject *idm_get_genomes(PyObject *args);
+PyObject *idm_align_data(PyObject *args);
 PyObject *idm_calculate_ibx(PyObject *args);

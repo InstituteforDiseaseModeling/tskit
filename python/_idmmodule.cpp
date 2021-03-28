@@ -37,6 +37,14 @@
  */
 
 static PyObject *
+align_data(PyObject *self, PyObject *arg)
+{
+    PyObject *ret = idm_align_data(arg);
+
+    return ret;
+}
+
+static PyObject *
 get_genomes(PyObject *self, PyObject *arg)
 {
     PyObject *ret = idm_get_genomes(arg);
@@ -53,6 +61,10 @@ calculate_ibx(PyObject *self, PyObject *args)
 }
 
 static PyMethodDef idm_methods[] = {
+    { .ml_name = "align_data",
+        .ml_meth = (PyCFunction) align_data,
+        .ml_flags = METH_O,
+        .ml_doc = "Returns a copy of the given array aligned in memory for vector operations." },
     { .ml_name = "get_genomes",
         .ml_meth = (PyCFunction) get_genomes,
         .ml_flags = METH_O,

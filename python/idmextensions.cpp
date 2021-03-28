@@ -4,6 +4,7 @@
 #define PY_ARRAY_UNIQUE_SYMBOL IDM_ARRAY_API
 #include <numpy/arrayobject.h>
 
+#include <algorithm>
 #include <iostream>
 #include <map>
 #include <set>
@@ -14,6 +15,8 @@
 
 #include <emmintrin.h>
 #include <immintrin.h>
+
+#define IDM_ALIGNMENT   32
 
 /********* Utility function ********/
 
@@ -26,6 +29,57 @@ void progress(size_t& percent, size_t current, size_t total, clock_t start)
         double remaining = ((double(total) / current - 1) * elapsed) / CLOCKS_PER_SEC;
         std::cout << percent << "% complete, ETA " << remaining << " seconds." << std::endl;
     }
+}
+
+/********* Align NumPy Array *********/
+
+PyArrayObject* validate_arg(PyObject *arg);
+
+PyObject *idm_align_data(PyObject *arg)
+{
+    PyArrayObject* array = validate_arg(arg);
+    PyArrayObject* aligned = nullptr;
+    
+    if ( array ) {
+        uint8_t* pdata;
+        size_t num_rows = PyArray_DIMS(array)[0];
+        size_t outstride = (PyArray_DIMS(array)[1] * PyArray_ITEMSIZE(array) + IDM_ALIGNMENT - 1) & ~(IDM_ALIGNMENT - 1);
+        size_t total_bytes = num_rows * outstride;
+        posix_memalign((void**)&pdata, IDM_ALIGNMENT, total_bytes);
+
+        printf("incoming array shape is (%ld, %ld)\n", PyArray_DIMS(array)[0], PyArray_DIMS(array)[1]);
+        printf("allocated %ld bytes aligned on %d byte boundary (%p), stride is %ld bytes\n", total_bytes, IDM_ALIGNMENT, pdata, outstride);
+
+        npy_intp outstrides[2] = { static_cast<npy_intp>(outstride), PyArray_ITEMSIZE(array) };
+        int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
+        aligned = (PyArrayObject*)PyArray_New(&PyArray_Type, PyArray_NDIM(array), PyArray_DIMS(array), PyArray_TYPE(array), outstrides, pdata, PyArray_ITEMSIZE(array), flags, nullptr);
+
+        uint8_t* indata = (uint8_t*)PyArray_DATA(array);
+        size_t instride = (size_t)PyArray_STRIDES(array)[0];
+        for ( size_t row = 0; row < (size_t)PyArray_DIMS(array)[0]; ++row ) {
+            memcpy(pdata + row * outstride, indata + row * instride, PyArray_DIMS(array)[1] * PyArray_ITEMSIZE(array));
+        }
+    }
+    else {
+        PyErr_SetString(PyExc_ValueError, "argument must be a two dimensional NumPy array");
+    }
+
+    Py_XINCREF(aligned);
+    return (PyObject*)aligned;
+}
+
+PyArrayObject* validate_arg(PyObject *arg)
+{
+    PyArrayObject* retval = nullptr;
+
+    if ( PyArray_Check(arg) ) {
+        retval = (PyArrayObject*)arg;
+        if ( PyArray_NDIM(retval) != 2) {
+            retval = nullptr;
+        }
+    }
+
+    return retval;
 }
 
 /********* Genomes from tree sequence *********/
@@ -105,8 +159,6 @@ out:
     return (PyObject *)array;
 }
 
-#define IDM_ALIGNMENT   32
-
 size_t get_elementsize(tsk_tree_t *tree);
 
 PyArrayObject *allocate_array(tsk_treeseq_t *tree_sequence)
@@ -142,7 +194,7 @@ PyArrayObject *allocate_array(tsk_treeseq_t *tree_sequence)
     // https://stackoverflow.com/a/58001107 - NPY_ARRAY_OWNDATA should tell Numpy to free(pdata) when appropriate
     int flags = NPY_ARRAY_CARRAY | NPY_ARRAY_OWNDATA;
 
-    PyArrayObject *array = (PyArrayObject *)PyArray_New(&PyArray_Type, ndims, dims, typenum, strides, pdata, elementsize, flags, NULL);
+    PyArrayObject *array = (PyArrayObject *)PyArray_New(&PyArray_Type, ndims, dims, typenum, strides, pdata, elementsize, flags, nullptr);
 
     printf("NDIM =       %d\n", PyArray_NDIM(array));
     for ( int i = 0; i < PyArray_NDIM(array); ++i )

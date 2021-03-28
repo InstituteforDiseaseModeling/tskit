@@ -2,6 +2,8 @@ import _idm
 import numpy as np
 
 
+align_data = _idm.align_data
+
 def get_genomes(ts):
     if not hasattr(ts, "_ll_tree_sequence"):
         raise RuntimeError("argument must be a tskit.TreeSequence")

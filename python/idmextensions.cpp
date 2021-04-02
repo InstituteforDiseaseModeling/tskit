@@ -108,9 +108,13 @@ PyObject *idm_get_genomes(PyObject *arg)
     tsk_tree_t tree;
 
     PyArrayObject *array = nullptr;
+    PyArrayObject *intervals = nullptr;
+    uint8_t* pdata = nullptr;
+    size_t stride = 0;
     int iter = 0;
     size_t current_interval = 0;
     size_t percent = 0;
+    std::vector<uint32_t> interval_lengths;
     clock_t start, end;
     float elapsed;
 
@@ -127,13 +131,14 @@ PyObject *idm_get_genomes(PyObject *arg)
     }
 
     array = allocate_array(tree_sequence);
+    pdata = (uint8_t*)PyArray_DATA(array);
+    stride = PyArray_STRIDES(array)[0];
 
     tsk_tree_init(&tree, tree_sequence, 0);
     start = clock();
     for (iter = tsk_tree_first(&tree), current_interval = 0; iter == 1; iter = tsk_tree_next(&tree), ++current_interval) {
+        interval_lengths.push_back(uint32_t(tree.right-tree.left));
         progress(percent, current_interval, tree_sequence->num_trees, start);
-        uint8_t *pdata = (uint8_t*)PyArray_DATA(array);
-        size_t stride = PyArray_STRIDES(array)[0];
         if ( PyArray_ITEMSIZE(array) == sizeof(uint16_t) ) {
             traverse_recursive<uint16_t>(&tree, pdata, stride, current_interval);
         } else {
@@ -144,8 +149,12 @@ PyObject *idm_get_genomes(PyObject *arg)
     elapsed = float(end - start) / CLOCKS_PER_SEC;
     DPRINTFMT("Recursive traversal of all trees took %f seconds\n", elapsed);
 
+    intervals = allocate_aligned_1d(interval_lengths.size(), sizeof(uint32_t), interval_lengths.data(), NPY_UINT32);
+
 out:
-    return (PyObject *)array;
+    // return (PyObject *)array;
+    // Tuple of (genomes, interval lengths)
+    return Py_BuildValue("OO", array, intervals);
 }
 
 size_t get_elementsize(tsk_tree_t *tree);
@@ -547,7 +556,7 @@ void process_blocks(size_t num_blocks,
         }
     }
     clock_t finish = clock();
-    std::cout << double(finish - start) / CLOCKS_PER_SEC << " seconds to calculate IBD for " << num_rows * (num_rows + 1) / 2 << " hash pairs." << std::endl;
+    std::cout << double(finish - start) / CLOCKS_PER_SEC << " seconds to calculate IBD for " << num_unique * (num_unique + 1) / 2 << " hash pairs." << std::endl;
 
     return;
 }

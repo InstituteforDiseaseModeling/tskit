@@ -96,3 +96,200 @@ similarity = ibx[mapping[hashes[i]], mapping[hashes[j]]]
 ```
 
 Note that the `IbxResults` class captures the hash list and mapping returned from `calculate_ibx()` and does this look up for you so you can index the results in an instance of `IbxResults` directly with the original genome IDs: `similarity = results[i, j]`
+
+----
+
+Notes sent to Mandy. Could incorporate some or all of this above.
+
+This work is based on [tskit](https://tskit.dev/tskit/docs/stable/index.html), the tree sequence toolkit. For the purposes of this documentation, a TreeSequence (the Python object tskit exposes) contains the information about a population of genomes, a defined set of intervals on each genome, e.g., three intervals at positions 1-100, 101-256, 257-1000, and the source of the genetic information for each interval on each genome, e.g., genome 4 is made up of material from root 2, root 0, and root 1, in that order for the three intervals on the genome.
+ 
+Here are some sample trees from an actual TreeSequence (in this case, the first four intervals):
+
+![four interval tree sequence](/tskit-tree-sequence.png)
+ 
+These trees define the following genomes (the sample trees specify 5 positions, I have only transcribed the first 4 here):
+
+|Genome\Interval|0 (23 positions)|1 (149 positions)|2 (5 positions)|3 (82 positions)|Note|
+|:-:|:-:|:-:|:-:|:-:|--|
+|**0**|0|0|0|0|By definition, this is a root.
+|**1**|1|1|1|1|"|
+|**2**|2|2|2|2|"|
+|**3**|0|0|0|0|Clonal copy of root 0|
+|**4**|0|2|2|2||
+|**5**|2|2|2|2|Clonal copy of root 2|
+|**6**|0|0|0|0|Clonal copy of root 0|
+|**7**|2|0|0|0||
+|**8**|2|2|0|0||
+|**9**|2|2|2|2|Clonal copy of root 2|
+|**10**|0|0|0|0|Clonal copy of root 0|
+|**11**|0|0|0|0|Clonal copy of root 0|
+|**12**|0|0|0|1||
+
+<br>
+
+```python
+>>> genomes, intervals = idm.get_genomes(ts)
+>>> genomes
+array([[0, 0, 0, 0],
+       [1, 1, 1, 1],
+       [2, 2, 2, 2],
+       [0, 0, 0, 0],
+       [0, 2, 2, 2],
+       [2, 2, 2, 2],
+       [0, 0, 0, 0],
+       [2, 0, 0, 0],
+       [2, 2, 0, 0],
+       [2, 2, 2, 2],
+       [0, 0, 0, 0],
+       [0, 0, 0, 0],
+       [0, 0, 0, 1]], dtype=uint16)
+>>> intervals
+array([ 23, 149,   5,  82], dtype=uint32)
+>>>
+```
+
+<br>
+
+Now it starts to get a little more interesting...
+
+We want to calculate IBD (identity by descent) or IBS (identity by state) - the similarity of two genomes either by the number of intervals in their genomes that come from the same root (IBD) or the number sites where they have the same allele/variant regardless of its source (IBS).
+
+So the brute force method is to compare the data of all pairs of genomes in the tree - an N^2 operation.
+
+Note that in the genomes output above, there are actually only 7 unique genomes (0, 1, 2, 4, 7, 8, and 12) since (3, 5, 6, 9, 10, and 11) are clonal copies of (root) 0 or (root) 2. So there are only 42 unique pairings (7x6) to calculate rather than 156 (13x12) a significant savings. Even more so when dealing with 24k genomes (~576,000,000 pairs) but only 6k unique (~36,000,000) or 86k genomes (~7,396,000,000) and only 24k unique (~576,000,000). But...how do we find clonal copies without comparing them against all the other genomes - exactly the computation we want to avoid?
+
+The solution is to calculate the SHA256 hash of each genome - a very fast operation. We get something like this:
+
+|Genome|SHA256 Hash\*|
+|:-:|:-:|
+|0|<font color="red">af5570f5</font>|
+|1|efef8d5a|
+|2|<font color="blue">7d1ad619</font>|
+|3|<font color="red">af5570f5</font>|
+|4|02a4219c|
+|5|<font color="blue">7d1ad619</font>|
+|6|<font color="red">af5570f5</font>|
+|7|d86e8112|
+|8|444b26b3|
+|9|<font color="blue">7d1ad619</font>|
+|10|<font color="red">af5570f5</font>|
+|11|<font color="red">af5570f5</font>|
+|12|30e06038|
+
+*Actual hash values are 64-characters: af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc
+ 
+Note that the same values show up in the genomes that have the same data. We then take the set of unique hash values and sort it in order to be able to recreate this configuration if necessary:
+
+||
+|:-:|
+|02a4219c|
+|30e06038|
+|444b26b3|
+|7d1ad619|
+|af5570f5|
+|d86e8112|
+|efef8d5a|
+
+Now we only calculate the similarity score for these unique pairs of hash values:
+
+||0 (02a4219c)|1 (30e06038)|2 (444b26b3)|3 (7d1ad619)|4 (af5570f5)|5 (d86e8112)|6 (efef8d5a)|
+|:-:|:-:|:-:|:-:|:-:|:-:|:-:|:-:|
+|0 (02a4219c)|259|23|149|236|23|0|0|
+|1 (30e06038)|23|259|5|0|177|154|82|
+|2 (444b26b3)|149|5|259|172|87|110|0|
+|3 (7d1ad619)|236|0|172|259|0|23|0|
+|4 (af5570f5)|23|177|87|0|259|236|0|
+|5 (d86e8112)|0|154|110|23|236|259|0|
+|6 (efef8d5a)|0|82|0|0|0|0|259|
+
+Note that any hash compared with itself has a perfect value - 259 (the sum of the intervals in this instance) because all intervals match.
+
+So, how do we determine the similarity of two genomes from the original set? Lets consider genomes 8 and 9 (note that the line numbers in the code above are line number, not row numbers in the array).
+
+Genome 8 is a recombination of roots 2 and 0: 2, 2, 0, 0.
+Genome 9 is a clonal copy of root 2: 2, 2, 2, 2.
+These two genomes match at the first and second interval or for 172 positions (23 for the first and 149 for the second).
+
+We use the list of hashes to get the hash for genome 8 - 444b26b3 - and for genome 9 - 7d1ad619 - then we find the position of these hashes in the sorted set of unique hashes, indices 2 and 3 respectively, and look up the similarity score in position [2,3] and get 172 - excellent! Note, of course, the matrix is symmetric across the diagonal.
+
+```python
+import tskit, idm
+
+# Load a tskit TreeSequence from disk
+sequence = tskit.load(filename)
+
+# Get the 2D genome data array and 1D intervals lengths vector
+genomes, intervals = idm.get_genomes(sequence)
+
+# Calculate the similarity between the genomes
+# ibx is the 2D array of similarity between unique hash values
+# hashes is the 1:1 list of hash values for the genomes
+# mapping is the map from a hash value to its place in the sorted list of unique hash values
+ibx, hashes, mapping = idm.calculate_ibx(genomes, intervals=intervals)
+
+# Get the similarity (IBD) score for genomes 8 and 9
+score = ibx[mapping[hashes[8]], mapping[hashes[9]]]
+```
+
+## IbxResult
+
+The contortions to get the similarity score for two genomes is a hassle so there is a helper class `IbxResults` which calls `idm.calculate_ibx()`, caches the data, hashes, and hash mapping it returns, and supports an indexing operator, `[a, b]`, which does all of the above and returns the similarity score for the given genome IDs.
+
+```python
+class IbxResults:
+
+    def __init__(self, genome, indices=None, intervals=None):
+        """caches the inputs, calls idm_calculate_ibx(), and captures the outputs"""
+        return
+
+    @property
+    def genome(self):
+        """The input genome, for reference"""
+        return self._genome
+
+    @property
+    def indices(self):
+        """The input set of indices, for reference"""
+        return self._indices
+
+    @property
+    def intervals(self):
+        """The input set of intervals, for reference"""
+        return self._intervals
+
+    @property
+    def pairs(self):
+        """The similarity scores, by hash, from calculate_ibx()"""
+        return self._ibx
+
+    @property
+    def hashes(self):
+        """The genome hashes from calculate_ibx()"""
+        return self._hashes
+
+    @property
+    def mapping(self):
+        """The hash->index mapping from calculate_ibx()"""
+        return self._mapping
+
+    def __getitem__(self, key):
+        """Return the similarity score for two genomes."""
+        if isinstance(key, slice):
+            ida, idb = key.start, key.stop
+        else:   # tuple
+            ida, idb = key
+
+        indexa = np.where(self._indices == ida)[0][0]
+        indexb = np.where(self._indices == idb)[0][0]
+
+        hasha = self._hashes[indexa]
+        hashb = self._hashes[indexb]
+        ibxa = self._mapping[hasha]
+        ibxb = self._mapping[hashb]
+
+        return self._ibx[ibxa, ibxb]
+```
+
+## IBD vs. IBS
+
+TODO

@@ -202,12 +202,12 @@ Now we only calculate the similarity score for these unique pairs of hash values
 |5 (d86e8112)|0|154|110|23|236|259|0|
 |6 (efef8d5a)|0|82|0|0|0|0|259|
 
-Note that any hash compared with itself has a perfect value - 259 (the sum of the intervals in this instance) because all intervals match.
+Note that any hash compared with itself has a perfect value - 259 (the sum of the interval lengths, 23 + 149 + 5 + 82, in this instance) because all intervals match.
 
-So, how do we determine the similarity of two genomes from the original set? Lets consider genomes 8 and 9 (note that the line numbers in the code above are line number, not row numbers in the array).
+So, how do we determine the similarity of two genomes from the original set? Lets consider genomes 8 and 9.
 
-Genome 8 is a recombination of roots 2 and 0: 2, 2, 0, 0.
-Genome 9 is a clonal copy of root 2: 2, 2, 2, 2.
+Genome 8 is a recombination of roots 2 and 0: 2, 2, 0, 0.  
+Genome 9 is a clonal copy of root 2: 2, 2, 2, 2.  
 These two genomes match at the first and second interval or for 172 positions (23 for the first and 149 for the second).
 
 We use the list of hashes to get the hash for genome 8 - 444b26b3 - and for genome 9 - 7d1ad619 - then we find the position of these hashes in the sorted set of unique hashes, indices 2 and 3 respectively, and look up the similarity score in position [2,3] and get 172 - excellent! Note, of course, the matrix is symmetric across the diagonal.
@@ -233,7 +233,7 @@ score = ibx[mapping[hashes[8]], mapping[hashes[9]]]
 
 ## IbxResult
 
-The contortions to get the similarity score for two genomes is a hassle so there is a helper class `IbxResults` which calls `idm.calculate_ibx()`, caches the data, hashes, and hash mapping it returns, and supports an indexing operator, `[a, b]`, which does all of the above and returns the similarity score for the given genome IDs.
+The contortions to get the similarity score for two genomes are a hassle so there is a helper class `IbxResults` which calls `idm.calculate_ibx()`, caches the data, hashes, and hash mapping it returns, and supports an indexing operator, `[a, b]`, which does all of the above and returns the similarity score for the given genome IDs.
 
 ```python
 class IbxResults:
@@ -288,6 +288,24 @@ class IbxResults:
         ibxb = self._mapping[hashb]
 
         return self._ibx[ibxa, ibxb]
+```
+
+The code from above but using `IbxResult` looks very similar but slightly more straightforward:
+
+```python
+import tskit, idm
+
+# Load a tskit TreeSequence from disk
+sequence = tskit.load(filename)
+
+# Get the 2D genome data array and 1D intervals lengths vector
+genomes, intervals = idm.get_genomes(sequence)
+
+# Use IbxResults to easily retrieve similarity scores
+results = idm.IbxResults(genomes, intervals=intervals)
+
+# Get the similarity (IBD) score for genomes 8 and 9
+score = results[8, 9]
 ```
 
 ## IBD vs. IBS

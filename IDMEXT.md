@@ -290,7 +290,7 @@ class IbxResults:
         return self._ibx[ibxa, ibxb]
 ```
 
-The code from above but using `IbxResult` looks very similar but slightly more straightforward:
+The code from above but using `IbxResults` looks very similar but slightly more straightforward:
 
 ```python
 import tskit, idm
@@ -310,4 +310,71 @@ score = results[8, 9]
 
 ## IBD vs. IBS
 
-TODO
+For IBD calculations, the genome data is the root from which each interval came and the length of that interval in base pairs. The IBD value for two genomes is the number of base pairs they have in common _due to the source of those pairs_.
+
+Most of the information presented above is describing the IBD calculation.
+
+For IBS calculations, the genome data is the allele at each site for the genome and the interval is assumed to be 1. The IBS value for two genomes is the number of sites where the two genomes have the same allele _regardless of source_ (i.e. mutation or from an unknown common ancestor).
+
+### IBS Example
+
+Suppose we have genomic data for 6 sites and we observe 2-5 variants/alleles at each sites like this:
+
+|Site|Variants/Alleles|
+|:-:|:-:|
+|0:|['A0', 'A1']|
+|1:|['B0', 'B1', 'B2', 'B3']|
+|2:|['C0', 'C1', 'C2']|
+|3:|['D0', 'D1', 'D2', 'D3', 'D4']|
+|4:|['E0', 'E1', 'E2']|
+|5:|['F0', 'F1', 'F2', 'F3']|
+
+Given some samples:
+
+|Sample|Genome|
+|:-:|-|
+|0:|['A0', 'B3', 'C0', 'D1', 'E2', 'F2']|
+|1:|['A1', 'B3', 'C2', 'D0', 'E2', 'F2']|
+|2:|['A0', 'B3', 'C0', 'D4', 'E0', 'F2']|
+|3:|['A1', 'B3', 'C1', 'D3', 'E0', 'F3']|
+|4:|['A1', 'B2', 'C0', 'D0', 'E1', 'F0']|
+|5:|['A0', 'B2', 'C1', 'D0', 'E0', 'F2']|
+|6:|['A1', 'B1', 'C2', 'D3', 'E1', 'F3']|
+|7:|['A1', 'B3', 'C0', 'D0', 'E1', 'F1']|
+
+We encode this with the allele index in each position:
+
+|Sample|Variant/Allele Indices|
+|:-:|-|
+|0:|[0 3 0 1 2 2]|
+|1:|[1 3 2 0 2 2]|
+|2:|[0 3 0 4 0 2]|
+|3:|[1 3 1 3 0 3]|
+|4:|[1 2 0 0 1 0]|
+|5:|[0 2 1 0 0 2]|
+|6:|[1 1 2 3 1 3]|
+|7:|[1 3 0 0 1 1]|
+
+Using this set of genome values with `IbxResults` and omitting the intervals parameter (this implicitly sets the length of each interval to 1) we get an _IBS_ calculation. E.g., genomes 0 and 2 match in 4 of 6 sites or genomes 3 and 7 match in 2 of 6 sites.
+
+```python
+by_sites = np.asarray([[0, 3, 0, 1, 2, 2],
+                       [1, 3, 2, 0, 2, 2],
+                       [0, 3, 0, 4, 0, 2], 
+                       [1, 3, 1, 3, 0, 3], 
+                       [1, 2, 0, 0, 1, 0], 
+                       [0, 2, 1, 0, 0, 2], 
+                       [1, 1, 2, 3, 1, 3], 
+                       [1, 3, 0, 0, 1, 1]], dtype=np.uint32)
+
+# Make sure data is aligned correctly
+by_sites = idm.align_data(by_sites)
+
+# Calculate IBS by using default interval length == 1
+results = idm.IbxResults(by_sites)
+
+results[0, 2]   # Returns 4
+results[3, 7]   # Returns 2
+```
+
+![logo](ibex.svg)

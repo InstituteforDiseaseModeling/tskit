@@ -243,7 +243,7 @@ class TestIdm(unittest.TestCase):
     def test_workflow1(self):
 
         ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
-        genomes = idm.get_genomes(ts)
+        genomes, intervals = idm.get_genomes(ts)
         ibx, hashes, mapping = idm.calculate_ibx(genomes)
         prng = np.random.default_rng()
         NUM_INDICES = 12
@@ -260,7 +260,7 @@ class TestIdm(unittest.TestCase):
     def test_workflow2(self):
 
         tc = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-collection.ts")
-        genomes = idm.get_genomes(tc)
+        genomes, intervals = idm.get_genomes(tc)
         ibx, hashes, mapping = idm.calculate_ibx(genomes)
         prng = np.random.default_rng()
         NUM_INDICES = 12
@@ -277,72 +277,161 @@ class TestIdm(unittest.TestCase):
 
 class TestIbxResults(unittest.TestCase):
 
-    genome = None
+    genomes = None
+    intervals = None
 
     @classmethod
     def setUpClass(cls):
         ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
-        TestIbxResults.genome = idm.get_genomes(ts)
+        TestIbxResults.genomes, TestIbxResults.intervals = idm.get_genomes(ts)
         return
 
     def test_happy_path_no_indices_no_intervals(self):
+        results = idm.IbxResults(TestIbxResults.genomes)
+        self.assertEqual(results[0,0], 147)     # identity = total length
+        self.assertEqual(results[0,1], 0)       # these are separate roots
+        self.assertEqual(results[0,4], 73)      # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,4], 74)      # 4 is a recombination of 0 and 2
         return
 
-    def test_happy_path_yes_indices_no_interfvals(self):
+    def test_happy_path_yes_indices_no_intervals(self):
+        indices = np.asarray([1, 2, 4, 5], dtype=np.uint32)
+        results = idm.IbxResults(TestIbxResults.genomes, indices=indices)
+        self.assertEqual(results.pairs.shape, (4, 4))
+        self.assertEqual(results[1,1], 147)     # identity = total length
+        self.assertEqual(results[1,2], 0)       # 1 and 2 are separate roots
+        self.assertEqual(results[2,4], 74)      # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,5], 66)      # 5 is a recombination of 0 and 2
         return
 
     def test_happy_path_no_indices_yes_intervals(self):
+        results = idm.IbxResults(TestIbxResults.genomes, intervals=TestIbxResults.intervals)
+        self.assertEqual(results[0,0], 14000)   # identity = total length
+        self.assertEqual(results[0,1], 0)       # these are separate roots
+        self.assertEqual(results[0,4], 7204)    # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,4], 6796)    # 4 is a recombination of 0 and 2
         return
 
     def test_happy_path_yes_indices_yes_intervals(self):
+        indices = np.asarray([1, 2, 4, 5], dtype=np.uint32)
+        results = idm.IbxResults(TestIbxResults.genomes, indices=indices, intervals=TestIbxResults.intervals)
+        self.assertEqual(results.pairs.shape, (4, 4))
+        self.assertEqual(results[1,1], 14000)   # identity = total length
+        self.assertEqual(results[1,2], 0)       # 1 and 2 are separate roots
+        self.assertEqual(results[2,4], 6796)    # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,5], 6423)    # 5 (indices[3]) is a recombination of 0 and 2
         return
 
     def test_with_indices_list(self):
+        results = idm.IbxResults(TestIbxResults.genomes, indices=[1, 2, 4, 5])
+        self.assertEqual(results.pairs.shape, (4, 4))
+        self.assertEqual(results[1,1], 147)     # identity = total length
+        self.assertEqual(results[1,2], 0)       # 1 and 2 are separate roots
+        self.assertEqual(results[2,4], 74)      # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,5], 66)      # 5 (indices[3]) is a recombination of 0 and 2
         return
 
     def test_with_indices_tuple(self):
+        results = idm.IbxResults(TestIbxResults.genomes, indices=(1, 2, 4, 5))
+        self.assertEqual(results.pairs.shape, (4, 4))
+        self.assertEqual(results[1,1], 147)     # identity = total length
+        self.assertEqual(results[1,2], 0)       # 1 and 2 are separate roots
+        self.assertEqual(results[2,4], 74)      # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,5], 66)      # 5 (indices[3]) is a recombination of 0 and 2
         return
 
     def test_with_indices_float(self):
+        indices = np.asarray([1, 2, 4, 5], dtype=np.float64)
+        results = idm.IbxResults(TestIbxResults.genomes, indices=indices)
+        self.assertEqual(results.pairs.shape, (4, 4))
+        self.assertEqual(results[1,1], 147)     # identity = total length
+        self.assertEqual(results[1,2], 0)       # 1 and 2 are separate roots
+        self.assertEqual(results[2,4], 74)      # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,5], 66)      # 5 (indices[3]) is a recombination of 0 and 2
         return
 
     def test_with_intervals_list(self):
+        intervals = list(TestIbxResults.intervals)
+        results = idm.IbxResults(TestIbxResults.genomes, intervals=intervals)
+        self.assertEqual(results[0,0], 14000)   # identity = total length
+        self.assertEqual(results[0,1], 0)       # these are separate roots
+        self.assertEqual(results[0,4], 7204)    # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,4], 6796)    # 4 is a recombination of 0 and 2
         return
 
     def test_with_intervals_tuple(self):
+        intervals = tuple(TestIbxResults.intervals)
+        results = idm.IbxResults(TestIbxResults.genomes, intervals=intervals)
+        self.assertEqual(results[0,0], 14000)   # identity = total length
+        self.assertEqual(results[0,1], 0)       # these are separate roots
+        self.assertEqual(results[0,4], 7204)    # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,4], 6796)    # 4 is a recombination of 0 and 2
         return
 
     def test_with_intervals_float(self):
+        intervals = np.array(TestIbxResults.intervals, dtype=np.float64)
+        results = idm.IbxResults(TestIbxResults.genomes, intervals=intervals)
+        self.assertEqual(results[0,0], 14000)   # identity = total length
+        self.assertEqual(results[0,1], 0)       # these are separate roots
+        self.assertEqual(results[0,4], 7204)    # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2,4], 6796)    # 4 is a recombination of 0 and 2
         return
 
     def test_bad_genome_type(self):
+        with self.assertRaises(RuntimeError):
+            _ = idm.IbxResults([[0,0,0,0,0,0,0,0], [1,1,1,1,1,1,1,1]])
         return
 
     def test_bad_genome_shape(self):
+        prng = np.random.default_rng()
+        threed = prng.integers(0, 16, (8, 16, 32), dtype=np.uint32)
+        with self.assertRaises(RuntimeError):
+            _ = idm.IbxResults(threed)
         return
 
     def test_bad_genome_dtype(self):
+        doubles = np.array(TestIbxResults.genomes, dtype=np.float64)
+        with self.assertRaises(RuntimeError):
+            _ = idm.IbxResults(doubles)
         return
 
     def test_bad_indices_shape(self):
+        prng = np.random.default_rng()
+        indices = prng.integers(1, 1024, (147, 147), dtype=np.uint32)
+        with self.assertRaises(RuntimeError):
+            _ = idm.IbxResults(TestIbxResults.genomes, indices=indices)
         return
 
     def test_bad_intervals_shape(self):
+        prng = np.random.default_rng()
+        intervals = prng.integers(1, 1024, (147, 147), dtype=np.uint32)
+        with self.assertRaises(RuntimeError):
+            _ = idm.IbxResults(TestIbxResults.genomes, intervals=intervals)
         return
 
     def test_get_item_with_slice(self):
+        results = idm.IbxResults(TestIbxResults.genomes)
+        self.assertEqual(results[0:0], 147)     # identity = total length
+        self.assertEqual(results[0:1], 0)       # these are separate roots
+        self.assertEqual(results[0:4], 73)      # 4 is a recombination of 0 and 2
+        self.assertEqual(results[2:4], 74)      # 4 is a recombination of 0 and 2
         return
 
-    def test_get_item_with_tuple(self):
-        return
+    # def test_get_item_with_tuple(self):
+        # tested in happy path tests
+        # return
 
     def test_get_item_with_bad_indexa(self):
+        results = idm.IbxResults(TestIbxResults.genomes)
+        with self.assertRaises(IndexError):
+            _ = results[42,0]
         return
 
     def test_get_item_width_bad_indexb(self):
+        results = idm.IbxResults(TestIbxResults.genomes)
+        with self.assertRaises(IndexError):
+            _ = results[0,42]
         return
-
-
 
 
 if __name__ == "__main__":

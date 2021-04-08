@@ -24,7 +24,7 @@
 
 With a TSKIT TreeSequence (e.g. `ts = tskit.load("tree-sequence.ts"))`)...
 
-0. `import idm`
+0. `import tskit, idm`
 1. get the "full genome" data for the genomes in the tree:
 
 ```python

@@ -243,7 +243,7 @@ class TestIdm(unittest.TestCase):
     def test_workflow1(self):
 
         ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
-        genomes, intervals = idm.get_genomes(ts)
+        genomes, _intervals = idm.get_genomes(ts)
         ibx, hashes, mapping = idm.calculate_ibx(genomes)
         prng = np.random.default_rng()
         NUM_INDICES = 12
@@ -260,7 +260,7 @@ class TestIdm(unittest.TestCase):
     def test_workflow2(self):
 
         tc = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-collection.ts")
-        genomes, intervals = idm.get_genomes(tc)
+        genomes, _intervals = idm.get_genomes(tc)
         ibx, hashes, mapping = idm.calculate_ibx(genomes)
         prng = np.random.default_rng()
         NUM_INDICES = 12
@@ -271,6 +271,36 @@ class TestIdm(unittest.TestCase):
                 icol = mapping[hashes[col]]
                 self.assertEqual(ibx[irow,icol], np.sum(genomes[row,:]==genomes[col,:]))
                 self.assertEqual(ibx[icol,irow], ibx[irow,icol])
+
+        return
+
+    def test_get_genomes_with_sampling1(self):
+
+        ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
+        full_genomes, intervals = idm.get_genomes(ts)
+        samples = [0, 1, 1, 2, 3, 5, 8]
+        sampled_genomes, jntervals = idm.get_genomes(ts, samples)
+
+        mapping = { id: index for index, id in enumerate(sorted(set(samples))) }
+        for sample in samples:
+            index = mapping[sample]
+            self.assertTrue(np.array_equal(sampled_genomes[index], full_genomes[sample]))
+        self.assertTrue(np.array_equal(jntervals, intervals))
+
+        return
+
+    def test_get_genomes_with_sampling2(self):
+
+        ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-collection.ts")
+        full_genomes, intervals = idm.get_genomes(ts)
+        samples = np.random.choice(ts.num_nodes, ts.num_nodes // 10)
+        sampled_genomes, jntervals = idm.get_genomes(ts, samples)
+
+        mapping = { id: index for index, id in enumerate(sorted(set(samples))) }
+        for sample in samples:
+            index = mapping[sample]
+            self.assertTrue(np.array_equal(sampled_genomes[index], full_genomes[sample]))
+        self.assertTrue(np.array_equal(jntervals, intervals))
 
         return
 

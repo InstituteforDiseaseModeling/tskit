@@ -45,9 +45,9 @@ align_data(PyObject *self, PyObject *arg)
 }
 
 static PyObject *
-get_genomes(PyObject *self, PyObject *arg)
+get_genomes(PyObject *self, PyObject *args)
 {
-    PyObject *ret = idm_get_genomes(arg);
+    PyObject *ret = idm_get_genomes(args);
 
     return ret;
 }
@@ -67,7 +67,7 @@ static PyMethodDef idm_methods[] = {
         .ml_doc = "Returns a copy of the given array aligned in memory for vector operations." },
     { .ml_name = "get_genomes",
         .ml_meth = (PyCFunction) get_genomes,
-        .ml_flags = METH_O,
+        .ml_flags = METH_VARARGS,
         .ml_doc = "Returns genomes (root of each interval) for a tree sequence as a NumPy array." },
     { .ml_name = "calculate_ibx",
         .ml_meth = (PyCFunction) calculate_ibx,

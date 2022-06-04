@@ -4,10 +4,16 @@ import numpy as np
 
 align_data = _idm.align_data
 
-def get_genomes(ts):
+def get_genomes(ts, samples=None):
     if not hasattr(ts, "_ll_tree_sequence"):
         raise RuntimeError("argument must be a tskit.TreeSequence")
-    return _idm.get_genomes(ts._ll_tree_sequence)
+    if samples is not None:
+        sampled_ids = np.full(ts.num_nodes, -1, dtype=np.int32)
+        for index, id in enumerate(sorted(set(samples))):
+            sampled_ids[id] = index
+    else:
+        sampled_ids = None
+    return _idm.get_genomes(ts._ll_tree_sequence, sampled_ids)
 
 
 def calculate_ibx(genome, indices=None, intervals=None):

@@ -73,44 +73,66 @@ PyArrayObject* validate_arg(PyObject *arg)
 
 template<typename T>
 static void
-_traverse(tsk_tree_t *tree, tsk_id_t node, tsk_id_t root, uint8_t* genome, size_t stride, size_t interval /*, int depth*/)
+_traverse(tsk_tree_t *tree, tsk_id_t node, tsk_id_t root, uint8_t* genome, size_t stride, size_t interval, uint32_t* pids /*, int depth*/)
 {
     // Visit node - store root at current interval for this node
-    T* pibd = (T*)(genome + node * stride) + interval;
-    *pibd = root;
+    // If we haven't (sub)sampled the genomes, store the value
+    if (!pids) {
+        T* pibd = (T*)(genome + node * stride) + interval;
+        *pibd = root;
+    }
+    // If we've (sub)sampled the genomes, see if this node is selected.
+    else if (pids[node] != uint32_t(-1)) {
+        // If so, use the index in the pids mapping rather than the node value itself.
+        T* pibd = (T*)(genome + pids[node] * stride) + interval;
+        *pibd = root;
+    }
+    // pids != nullptr but pids[node] == -1 ... don't store the interval root information
 
     // Visit node's children
     for (tsk_id_t child = tree->left_child[node]; child != TSK_NULL; child = tree->right_sib[child]) {
-        _traverse<T>(tree, child, root, genome, stride, interval /*, depth + 1 */);
+        _traverse<T>(tree, child, root, genome, stride, interval, pids /*, depth + 1 */);
     }
 }
 
 template<typename T>
 static void
-traverse_recursive(tsk_tree_t *tree, uint8_t* genome, size_t stride, size_t interval)
+traverse_recursive(tsk_tree_t *tree, uint8_t* genome, size_t stride, size_t interval, uint32_t* pids)
 {
     // For each unique root, visit root (and it's children)
     for (tsk_id_t root = tree->left_root; root != TSK_NULL; root = tree->right_sib[root]) {
-        _traverse<T>(tree, root, root, genome, stride, interval /*, 0*/);
+        _traverse<T>(tree, root, root, genome, stride, interval, pids /*, 0*/);
     }
 }
 
-PyArrayObject *allocate_array(tsk_treeseq_t *tree_sequence);
+size_t get_elementsize(tsk_tree_t *tree);
+PyArrayObject *allocate_array(size_t num_rows, size_t num_cols, size_t element_size);
 
 typedef struct {
     PyObject_HEAD
     tsk_treeseq_t *tree_sequence;
 } TreeSequence;
 
-PyObject *idm_get_genomes(PyObject *arg)
+PyObject *idm_get_genomes(PyObject *args)
 {
+    DPRINT("In idm_get_genomes()...\n");
+
     tsk_treeseq_t *tree_sequence;
     tsk_tree_t tree;
+
+    size_t element_size = 0;
+    size_t num_rows = 0;
+    size_t num_cols = 0;
+
+    PyObject *ts_arg = nullptr;
+    PyArrayObject* nd_sample_ids = nullptr;
+    size_t num_samples = 0;
 
     PyArrayObject *array = nullptr;
     PyArrayObject *intervals = nullptr;
     uint8_t* pdata = nullptr;
     size_t stride = 0;
+    uint32_t* pids = nullptr;
     int iter = 0;
     size_t current_interval = 0;
     size_t percent = 0;
@@ -118,31 +140,84 @@ PyObject *idm_get_genomes(PyObject *arg)
     clock_t start, end;
     float elapsed;
 
-    if ( std::string(arg->ob_type->tp_name) != "_tskit.TreeSequence" ) {
-        PyErr_Format(PyExc_RuntimeError, "Argument to get_genomes() must be a _tskit.TreeSequence - got '%s'.\n", arg->ob_type->tp_name);
+    DPRINT("idm_get_genomes: calling PyArg_ParseTuple()...\n");
+    if ( !PyArg_ParseTuple(args, "O|O", (PyObject *)&ts_arg, (PyObject *)&nd_sample_ids) )
+        goto out;
+
+    DPRINT("idm_get_genomes: checking ts_arg name...\n");
+    if ( std::string(ts_arg->ob_type->tp_name) != "_tskit.TreeSequence" ) {
+        PyErr_Format(PyExc_RuntimeError, "Argument to get_genomes() must be a _tskit.TreeSequence - got '%s'.\n", ts_arg->ob_type->tp_name);
         goto out;
     }
 
-    tree_sequence = ((TreeSequence *)arg)->tree_sequence;
+    tree_sequence = ((TreeSequence *)ts_arg)->tree_sequence;
+
+    DPRINTFMT("tree_sequence->num_trees   = %d\n", uint32_t(tree_sequence->num_trees));
+    DPRINTFMT("tree_sequence->num_samples = %d\n", uint32_t(tree_sequence->num_samples));
+    for ( uint32_t i = 0; i < uint32_t(std::min(16, int(tree_sequence->num_samples))); ++i ) {
+        DPRINTFMT("seq %02d, id = %d\n", i, uint32_t(tree_sequence->samples[i]));
+    }
 
     if ( !tree_sequence ) {
         PyErr_SetString(PyExc_RuntimeError, "TreeSequence is not initialized.\n");
         goto out;
     }
 
-    array = allocate_array(tree_sequence);
-    pdata = (uint8_t*)PyArray_DATA(array);
-    stride = PyArray_STRIDES(array)[0];
+    DPRINT("idm_get_genomes: checking for nd_sample_ids == Py_None\n");
+    if ( (PyObject *)nd_sample_ids == Py_None ) {
+        DPRINT("nd_sample_ids == Py_None, setting to NULL\n");
+        nd_sample_ids = nullptr;
+    }
+
+    DPRINT("idm_get_genomes: validating nd_sample_ids (if != nullptr)...\n");
+    if ( nd_sample_ids ) {
+        if ( !(PyArray_Check(nd_sample_ids) &&
+               (PyArray_NDIM(nd_sample_ids) == 1) &&
+               (PyArray_TYPE(nd_sample_ids) == NPY_INT32) &&
+               (PyArray_DIMS(nd_sample_ids)[0] == tree_sequence->num_samples)) ) {
+
+                   DPRINTFMT("PyArray_NDIM(nd_sample_ids)    = %d\n", uint32_t(PyArray_NDIM(nd_sample_ids)));
+                   DPRINTFMT("PyArray_Type(nd_sample_ids)    = %d (expecting %d)\n", uint32_t(PyArray_TYPE(nd_sample_ids)), uint32_t(NPY_INT32));
+                   DPRINTFMT("PyArray_DIMS(nd_sample_ids)[0] = %d (expecting %d)\n", uint32_t(PyArray_DIMS(nd_sample_ids)[0]), uint32_t(tree_sequence->num_samples));
+
+                   PyErr_SetString(PyExc_RuntimeError, "Sample IDs must be a one dimensional vector of int32 == # genomes in the tree.\n");
+                   goto out;
+               }
+
+        for ( uint32_t i = 0; i < uint32_t(std::min(16, int(PyArray_DIMS(nd_sample_ids)[0]))); ++i ) {
+            DPRINTFMT("nd_sample_ids[%02d] = %d\n", i, uint32_t(((uint32_t *)PyArray_DATA(nd_sample_ids))[i]));
+        }
+
+        int32_t* pids = (int32_t*)PyArray_DATA(nd_sample_ids);
+        for ( uint32_t i = 0; i < uint32_t(PyArray_DIMS(nd_sample_ids)[0]); ++i ) {
+            if ( pids[i] != -1 ) {
+                ++num_samples;
+            }
+        }
+        DPRINTFMT("%d sample ids in nd_sample_ids\n", num_samples);
+
+        DPRINT("nd_sample_ids passed validation, incrementing refcount");
+        Py_XINCREF(nd_sample_ids);
+    }
 
     tsk_tree_init(&tree, tree_sequence, 0);
+
+    element_size = get_elementsize(&tree);
+    num_rows = num_samples ? num_samples : size_t(tree.num_nodes);
+    num_cols = size_t(tree_sequence->num_trees);
+    array = allocate_array(num_rows, num_cols, element_size);
+    pdata = (uint8_t*)PyArray_DATA(array);
+    stride = PyArray_STRIDES(array)[0];
+    pids = nd_sample_ids ? (uint32_t*)PyArray_DATA(nd_sample_ids) : nullptr;
+
     start = clock();
     for (iter = tsk_tree_first(&tree), current_interval = 0; iter == 1; iter = tsk_tree_next(&tree), ++current_interval) {
         interval_lengths.push_back(uint32_t(tree.right-tree.left));
         progress(percent, current_interval, tree_sequence->num_trees, start);
         if ( PyArray_ITEMSIZE(array) == sizeof(uint16_t) ) {
-            traverse_recursive<uint16_t>(&tree, pdata, stride, current_interval);
+            traverse_recursive<uint16_t>(&tree, pdata, stride, current_interval, pids);
         } else {
-            traverse_recursive<uint32_t>(&tree, pdata, stride, current_interval);
+            traverse_recursive<uint32_t>(&tree, pdata, stride, current_interval, pids);
         }
     }
     end = clock();
@@ -152,29 +227,24 @@ PyObject *idm_get_genomes(PyObject *arg)
     intervals = allocate_aligned_1d(interval_lengths.size(), sizeof(uint32_t), interval_lengths.data(), NPY_UINT32);
 
 out:
+    DPRINT("Returning from idm_get_genomes()...\n");
+
     // return (PyObject *)array;
     // Tuple of (genomes, interval lengths)
     return Py_BuildValue("OO", array, intervals);
 }
 
-size_t get_elementsize(tsk_tree_t *tree);
-
-PyArrayObject *allocate_array(tsk_treeseq_t *tree_sequence)
+PyArrayObject *allocate_array(size_t num_rows, size_t num_columns, size_t element_size)
 {
     PyArrayObject* array = nullptr;
-    tsk_tree_t tree;
-    tsk_tree_init(&tree, tree_sequence, 0);
-    tsk_tree_first(&tree);
 
-    tsk_size_t num_rows    = tree.num_nodes;
-    tsk_size_t num_columns = tree_sequence->num_trees;
     DPRINTFMT("# nodes = .. %d\n", num_rows);
     DPRINTFMT("# trees =    %d\n", num_columns);
+    DPRINTFMT("element size = %d\n", element_size);
 
-    size_t elementsize = get_elementsize(&tree);
-    int typenum = elementsize == 2 ? NPY_UINT16 : NPY_UINT32;
+    int typenum = element_size == 2 ? NPY_UINT16 : NPY_UINT32;
 
-    array = allocate_aligned_2d((size_t)num_rows, (size_t)num_columns, elementsize, nullptr, 0, typenum);
+    array = allocate_aligned_2d(num_rows, num_columns, element_size, nullptr, 0, typenum);
 
     return array;
 }

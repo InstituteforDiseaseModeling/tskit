@@ -51,7 +51,7 @@ In general the mapping from sample IDs to genome position looks like this:
 
 ```python
 # We use set() to get only unique values
-# We use sorted() to sorted the IDs
+# We use sorted() to sort the IDs
 # We use enumerate to get the index for each ID and return a dictionary with the ID as the key and the index position as the value
 mapping = { id: index for index, id in enumerate(sorted(set(samples))) }
 

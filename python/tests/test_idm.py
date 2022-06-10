@@ -304,6 +304,22 @@ class TestIdm(unittest.TestCase):
 
         return
 
+    def test_get_genomes_with_negative_sample_id(self):
+
+        ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
+        with self.assertRaises(ValueError):
+            _, __ = idm.get_genomes(ts, [-11])
+
+        return
+
+    def test_get_genomes_with_out_of_range_sample_id(self):
+
+        ts = tskit.load(Path(__file__).parent.absolute() / "data" / "idm" / "tree-sequence.ts")
+        with self.assertRaises(ValueError):
+            _, __ = idm.get_genomes(ts, [ts.num_nodes * 2])
+
+        return
+
 
 class TestIbxResults(unittest.TestCase):
 

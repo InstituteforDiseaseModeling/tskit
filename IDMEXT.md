@@ -31,6 +31,38 @@ With a TSKIT TreeSequence (e.g. `ts = tskit.load("tree-sequence.ts"))`)...
 genomes, lengths = idm.get_genomes(ts)
 ```
 
+Optionally include a `samples` argument to `get_genomes`:
+
+```python
+genomes, lengths = idm.get_genomes(ts, samples)
+```
+
+where `samples` is an iterable object (e.g. list or Numpy array) of genome IDs. Note that the genomes must be accessed by the following mapping: genomes[<index of ID in samples>]. For example:
+
+```python
+samples = [13, 42]
+genomes, _ = idm.get_genomes(ts, samples)
+
+genomes[0]  # genomic information for genome 13 (13 is at position 0 in the samples list)
+genomes[1]  # genomic information for genome 42 (42 is at position 1 in the samples list)
+```
+
+In general the mapping from sample IDs to genome position looks like this:
+
+```python
+# We use set() to get only unique values
+# We use sorted() to sorted the IDs
+# We use enumerate to get the index for each ID and return a dictionary with the ID as the key and the index position as the value
+mapping = { id: index for index, id in enumerate(sorted(set(samples))) }
+
+# e.g. for example above
+mapping[13] == 0
+mapping[42] == 1
+
+genomes[mapping[13]]    # genomic information for genome 13
+genomes[mapping[42]]    # genomic information for genome 42
+```
+
 ### For IB**D** Data
 
 2. `ibd = idm.IbxResults(genomes, intervals=lengths)`

@@ -8,6 +8,8 @@ def get_genomes(ts, samples=None):
     if not hasattr(ts, "_ll_tree_sequence"):
         raise RuntimeError("argument must be a tskit.TreeSequence")
     if samples is not None:
+        if (min(samples) < -1) or (max(samples) >= ts.num_nodes):
+            raise ValueError(f"minimum ID ({min(samples)}) must be >= 0 and maximum ID ({max(samples)}) must be < number of tree sequence nodes ({ts.num_nodes})")
         sampled_ids = np.full(ts.num_nodes, -1, dtype=np.int32)
         for index, id in enumerate(sorted(set(samples))):
             sampled_ids[id] = index

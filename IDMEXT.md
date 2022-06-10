@@ -37,7 +37,7 @@ Optionally include a `samples` argument to `get_genomes`:
 genomes, lengths = idm.get_genomes(ts, samples)
 ```
 
-where `samples` is an iterable object (e.g. list or Numpy array) of genome IDs. Note that the genomes must be accessed by the following mapping: genomes[<index of ID in samples>]. For example:
+where `samples` is an iterable object (e.g. list or Numpy array) of genome IDs. Note that the genomes must be accessed by the following mapping: genomes[\<index of ID in ordered set of sample IDs\>]. For example:
 
 ```python
 samples = [13, 42]

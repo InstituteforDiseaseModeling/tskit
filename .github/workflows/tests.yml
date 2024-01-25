@@ -3,7 +3,9 @@ name: Tests
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
+      - idm-ibx-calculations
 
 jobs:
   pre-commit:

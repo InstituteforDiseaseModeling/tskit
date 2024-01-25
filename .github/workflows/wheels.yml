@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - test
+      - idm-ibx-calculations
     tags:
       - '*'
   release:
@@ -15,7 +16,7 @@ jobs:
     runs-on: macos-latest
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.8, 3.9, 3.10, 3.11, 3.12]
     steps:
       - name: Checkout
         uses: actions/checkout@v2
@@ -57,7 +58,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.8, 3.9, 3.10, 3.11, 3.12]
         wordsize: [64]
     steps:
       - name: Checkout
@@ -141,12 +142,156 @@ jobs:
           name: linux-wheels
           path: python/dist/wheelhouse
 
+  manylinux9:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+            submodules: true
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - name: Build sdist
+        shell: bash
+        run: |
+          cd python
+          python setup.py sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v2
+        with:
+          name: sdist
+          path: python/dist
+
+      - name: Build wheels in docker
+        shell: bash
+        run: |
+          docker run --rm -v `pwd`:/project -w /project quay.io/pypa/manylinux2010_x86_64 bash .github/workflows/docker/buildwheel.sh
+
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-wheels
+          path: python/dist/wheelhouse
+
+  manylinux10:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+            submodules: true
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.10
+
+      - name: Build sdist
+        shell: bash
+        run: |
+          cd python
+          python setup.py sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v2
+        with:
+          name: sdist
+          path: python/dist
+
+      - name: Build wheels in docker
+        shell: bash
+        run: |
+          docker run --rm -v `pwd`:/project -w /project quay.io/pypa/manylinux2010_x86_64 bash .github/workflows/docker/buildwheel.sh
+
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-wheels
+          path: python/dist/wheelhouse
+
+  manylinux11:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+            submodules: true
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.11
+
+      - name: Build sdist
+        shell: bash
+        run: |
+          cd python
+          python setup.py sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v2
+        with:
+          name: sdist
+          path: python/dist
+
+      - name: Build wheels in docker
+        shell: bash
+        run: |
+          docker run --rm -v `pwd`:/project -w /project quay.io/pypa/manylinux2010_x86_64 bash .github/workflows/docker/buildwheel.sh
+
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-wheels
+          path: python/dist/wheelhouse
+
+  manylinux12:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+            submodules: true
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v2
+        with:
+          python-version: 3.12
+
+      - name: Build sdist
+        shell: bash
+        run: |
+          cd python
+          python setup.py sdist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v2
+        with:
+          name: sdist
+          path: python/dist
+
+      - name: Build wheels in docker
+        shell: bash
+        run: |
+          docker run --rm -v `pwd`:/project -w /project quay.io/pypa/manylinux2010_x86_64 bash .github/workflows/docker/buildwheel.sh
+
+      - name: Upload Wheels
+        uses: actions/upload-artifact@v2
+        with:
+          name: linux-wheels
+          path: python/dist/wheelhouse
+
   OSX-test:
     needs: ['OSX']
     runs-on: macos-latest
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.8, 3.9, 3.10, 3.11, 3.12]
     steps:
       - name: Download wheels
         uses: actions/download-artifact@v2
@@ -168,7 +313,7 @@ jobs:
     runs-on: windows-latest
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.8, 3.9, 3.10, 3.11, 3.12]
         wordsize: [64]
     steps:
       - name: Download wheels
@@ -191,7 +336,7 @@ jobs:
     needs: ['manylinux']
     strategy:
       matrix:
-        python: [3.7, 3.8, 3.9]
+        python: [3.8, 3.9, 3.10, 3.11, 3.12]
     steps:
       - name: Download wheels
         uses: actions/download-artifact@v2

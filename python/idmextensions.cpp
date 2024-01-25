@@ -13,8 +13,10 @@
 
 #include "sha256.h"
 
+#if __AVX2__
 #include <emmintrin.h>
 #include <immintrin.h>
+#endif
 
 #if 0
 #define DPRINT(_s_)        printf(_s_)
@@ -137,8 +139,8 @@ PyObject *idm_get_genomes(PyObject *args)
     size_t current_interval = 0;
     size_t percent = 0;
     std::vector<uint32_t> interval_lengths;
-    clock_t start, end;
-    float elapsed;
+    // DEBUG ONLY clock_t start, end;
+    // DEBUG ONLY float elapsed;
 
     DPRINT("idm_get_genomes: calling PyArg_ParseTuple()...\n");
     if ( !PyArg_ParseTuple(args, "O|O", (PyObject *)&ts_arg, (PyObject *)&nd_sample_ids) )
@@ -210,7 +212,7 @@ PyObject *idm_get_genomes(PyObject *args)
     stride = PyArray_STRIDES(array)[0];
     pids = nd_sample_ids ? (uint32_t*)PyArray_DATA(nd_sample_ids) : nullptr;
 
-    start = clock();
+    // DEBUG ONLY start = clock();
     for (iter = tsk_tree_first(&tree), current_interval = 0; iter == 1; iter = tsk_tree_next(&tree), ++current_interval) {
         interval_lengths.push_back(uint32_t(tree.right-tree.left));
         progress(percent, current_interval, tree_sequence->num_trees, start);
@@ -220,9 +222,9 @@ PyObject *idm_get_genomes(PyObject *args)
             traverse_recursive<uint32_t>(&tree, pdata, stride, current_interval, pids);
         }
     }
-    end = clock();
-    elapsed = float(end - start) / CLOCKS_PER_SEC;
-    DPRINTFMT("Recursive traversal of all trees took %f seconds\n", elapsed);
+    // DEBUG ONLY end = clock();
+    // DEBUG ONLY elapsed = float(end - start) / CLOCKS_PER_SEC;
+    // DEBUG ONLY DPRINTFMT("Recursive traversal of all trees took %f seconds\n", elapsed);
 
     intervals = allocate_aligned_1d(interval_lengths.size(), sizeof(uint32_t), interval_lengths.data(), NPY_UINT32);
 
@@ -265,6 +267,8 @@ size_t get_elementsize(tsk_tree_t *tree)
 
 /********* IBx calculation *********/
 
+#if __AVX2__
+
 uint32_t hsum_epi32_sse3(__m128i v) {                                       // v     = DCBA
     __m128i hi64  = _mm_unpackhi_epi64(v, v);                               // hi64  = DCDC
     __m128i sum64 = _mm_add_epi32(hi64, v);                                 // sum64 = D+D, C+C, D+B, C+A
@@ -279,6 +283,8 @@ uint32_t hsum256_epi32_avx(__m256i v) {             // v   = HGFEDCBA
             vlo = _mm_add_epi32(vlo, vhi);          // vlo = 0000, H+D, G+C, F+B, E+A
     return hsum_epi32_sse3(vlo);                    // return sum of bottom 128 bits of vlo = H+G+F+E+D+C+B+A
 }
+
+#endif
 
 typedef void (*simd_comp_t)(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride, size_t xgenome, size_t num_intervals, size_t yibd, size_t xibd, uint32_t* pintervals, size_t num_unique, uint32_t* ibx);
 
@@ -638,6 +644,7 @@ void inner_loop32(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
     uint32_t* genomeb = (uint32_t*)(pdata + pids[xgenome] * stride);            // GENOME is uint32_t
 
     size_t num_simd = num_intervals & ~7;
+#if __AVX2__
     for ( size_t simd = 0; simd < num_simd; simd += 8 ) {
         __m256i ga    = _mm256_load_si256((const __m256i*)(genomea + simd));    // load 8x uint32_t
         __m256i gb    = _mm256_load_si256((const __m256i*)(genomeb + simd));    // load 8x uint32_t
@@ -646,6 +653,18 @@ void inner_loop32(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
         __m256i tmp   = _mm256_and_si256(eq, span);                             // bitwise and interval span with comparison result
         ibx_for_pair += hsum256_epi32_avx(tmp);                                 // sum resulting values and add to running total
     }
+#endif
+#if __ARM_NEON__
+    for ( size_t simd = 0; simd < num_simd; simd += 4 ) {
+        uint32x4_t ga    = vld1q_u32(genomea + simd);                           // load 4x uint32_t
+        uint32x4_t gb    = vld1q_u32(genomeb + simd);                           // load 4x uint32_t
+        uint32x4_t span  = vld1q_u32(pintervals + simd);                        // load matching interval spans
+        uint32x4_t eq    = vceqq_u32(ga, gb);                                   // compare each entry equal -> 0xFFFFFFFF, not equal -> 0x00000000
+        uint32x4_t tmp   = vandq_u32(eq, span);                                 // bitwise and interval span with comparison result
+        // ibx_for_pair += hsum_neon(tmp);                                         // sum resulting values and add to running total
+        ibx_for_pair += vaddvq_u32(tmp);
+    }
+#endif
 
     for ( size_t iinterval = num_simd; iinterval < num_intervals; ++iinterval ) {
         if ( genomea[iinterval] == genomeb[iinterval] ) {
@@ -663,6 +682,7 @@ void inner_loop16(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
     uint16_t* genomeb = (uint16_t*)(pdata + pids[xgenome] * stride);    // GENOME in _this function_ is uint16_t
 
     size_t num_simd = num_intervals & ~7;                               // We calculate 8 at a time, round num_intervals down to largest multiple of 8
+#if __AVX2__
     for ( size_t simd = 0; simd < num_simd; simd += 8 ) {
         __m256i ga    = _mm256_cvtepi16_epi32(_mm_load_si128((const __m128i*)(genomea + simd)));    // load 8x uint16_t, convert to 8x uint32_t
         __m256i gb    = _mm256_cvtepi16_epi32(_mm_load_si128((const __m128i*)(genomeb + simd)));    // load 8x uint16_t, convert to 8x uint32_t
@@ -671,6 +691,18 @@ void inner_loop16(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
         __m256i tmp   = _mm256_and_si256(eq, span);                                                 // bitwise and interval span with comparison result
         ibx_for_pair += hsum256_epi32_avx(tmp);                                                     // sum resulting values and add to running total
     }
+#endif
+#if __ARM_NEON__
+    for ( size_t simd = 0; simd < num_simd; simd += 4 ) {
+        uint32x4_t ga    = vmovl_u16(vld1_u16(genomea + simd)); // load 4x uint16_t, convert to 4x uint32_t
+        uint32x4_t gb    = vmovl_u16(vld1_u16(genomeb + simd)); // load 4x uint16_t, convert to 4x uint32_t
+        uint32x4_t span  = vld1q_u32(pintervals + simd);        // load matching interval spans
+        uint32x4_t eq    = vceqq_u32(ga, gb);                   // compare each entry equal -> 0xFFFFFFFF, not equal -> 0x00000000
+        uint32x4_t tmp   = vandq_u32(eq, span);                 // bitwise and interval span with comparison result
+        // ibx_for_pair += hsum_neon(tmp);                         // sum resulting values and add to running total
+        ibx_for_pair += vaddvq_u32(tmp);
+    }
+#endif
 
     for ( size_t iinterval = num_simd; iinterval < num_intervals; ++iinterval ) {
         if ( genomea[iinterval] == genomeb[iinterval] ) {
@@ -685,6 +717,7 @@ void inner_loop16(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
 
 void inner_loop08(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride, size_t xgenome, size_t num_intervals, size_t yibx, size_t xibx, uint32_t* pintervals, size_t num_unique, uint32_t* ibx)
 {
+#if __AVX2__
     __m256i eightFifteen = _mm256_set_epi8( 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,         // zero all these
                                             0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,         // zero all these
                                             0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,         // zero all these
@@ -694,6 +727,7 @@ void inner_loop08(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
                                                    0x0F, 0x0E, 0x0D, 0x0C, 0x0B, 0x0A, 0x09, 0x08,  // shuffle 24..31 -> 16..23
                                                    0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,  // zero all these
                                                    0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80); // zero all these
+#endif
 
     uint32_t ibx_for_pair = 0;                                                          // IBD is _always_ uint32_t
     uint8_t* genomea = (uint8_t*)(pdata + pids[ygenome] * stride);                      // GENOME in _this function_ is uint8_t
@@ -704,10 +738,11 @@ void inner_loop08(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
     DPRINTFMT("inner_loop08: genomea = %p, genomeb = %p\n", genomea, genomeb);
 
     size_t num_simd = num_intervals & ~31;
+#if __AVX2__
     for ( size_t simd = 0; simd < num_simd; simd += 32 ) {
         __m256i ga    = _mm256_load_si256((const __m256i*)(genomea + simd));            // load 32x uint8_t
         __m256i gb    = _mm256_load_si256((const __m256i*)(genomeb + simd));            // load 32x uint8_t
-        __m256i eq    = _mm256_cmpeq_epi8(ga, gb);                                      // compare each each entry, equal -> 0xFF, not equal -> 0x00
+        __m256i eq    = _mm256_cmpeq_epi8(ga, gb);                                      // compare each entry, equal -> 0xFF, not equal -> 0x00
         __m256i span0 = _mm256_load_si256((const __m256i*)(pintervals + simd));         // load 8x spans
         __m256i span1 = _mm256_load_si256((const __m256i*)(pintervals + simd +  8));    // load 8x spans
         __m256i span2 = _mm256_load_si256((const __m256i*)(pintervals + simd + 16));    // load 8x spans
@@ -733,6 +768,38 @@ void inner_loop08(uint8_t* pdata, uint32_t* pids, size_t ygenome, size_t stride,
                 temp3 = _mm256_and_si256(temp3, span3); // bitwise and masks with intervals
         ibx_for_pair += hsum256_epi32_avx(temp3);
     }
+#endif
+#if __ARM_NEON__
+    for ( size_t simd = 0; simd < num_simd; simd += 16 ) {
+        uint8x16_t ga0 = vld1q_u8(genomea + simd);              // load 16x uint8_t
+        uint8x16_t gb0 = vld1q_u8(genomeb + simd);              // load 16x uint8_t
+        uint32x4_t span0 = vld1q_u32(pintervals + simd);        // load 4x spans
+        uint32x4_t span1 = vld1q_u32(pintervals + simd + 4);    // load 4x spans
+        uint32x4_t span2 = vld1q_u32(pintervals + simd + 8);    // load 4x spans
+        uint32x4_t span3 = vld1q_u32(pintervals + simd + 12);   // load 4x spans
+        uint8x16_t eq0 = vceqq_u8(ga0, gb0);                    // compare each entry, equal -> 0xFF, not equal -> 0x00
+        // convert first four values of eq0 to uint32_t
+        uint32x4_t temp0 = vmovl_u16(vget_low_u16(vmovl_u8(vget_low_u8(eq0))));
+                   temp0 = vandq_u32(temp0, span0); // bitwise and masks with intervals
+        // ibx_for_pair += hsum_neon(temp0);
+        ibx_for_pair += vaddvq_u32(temp0);
+        // convert second four values of eq0 to uint32_t
+        uint32x4_t temp1 = vmovl_u16(vget_high_u16(vmovl_u8(vget_low_u8(eq0))));
+                   temp1 = vandq_u32(temp1, span1); // bitwise and masks with intervals 
+        // ibx_for_pair += hsum_neon(temp1);
+        ibx_for_pair += vaddvq_u32(temp1);
+        // convert third four values of eq0 to uint32_t
+        uint32x4_t temp2 = vmovl_u16(vget_low_u16(vmovl_u8(vget_high_u8(eq0))));
+                   temp2 = vandq_u32(temp2, span2); // bitwise and masks with intervals 
+        // ibx_for_pair += hsum_neon(temp2);
+        ibx_for_pair += vaddvq_u32(temp2);
+        // convert fourth four values of eq0 to uint32_t
+        uint32x4_t temp3 = vmovl_u16(vget_high_u16(vmovl_u8(vget_high_u8(eq0))));
+                   temp3 = vandq_u32(temp3, span3); // bitwise and masks with intervals 
+        // ibx_for_pair += hsum_neon(temp3);
+        ibx_for_pair += vaddvq_u32(temp3);
+    }
+#endif
     for ( size_t iinterval = num_simd; iinterval < num_intervals; ++iinterval ) {
         if ( genomea[iinterval] == genomeb[iinterval] ) {
             ibx_for_pair += pintervals[iinterval];

@@ -128,7 +128,7 @@ std::string sha256(const std::string& input)
     char buf[2*SHA256::DIGEST_SIZE+1];
     buf[2*SHA256::DIGEST_SIZE] = 0;
     for (int i = 0; i < SHA256::DIGEST_SIZE; i++)
-        sprintf(buf+i*2, "%02x", digest[i]);
+        snprintf(buf+i*2, 3, "%02x", digest[i]);
     return std::string(buf);
 }
 
@@ -146,7 +146,7 @@ std::string sha256(const std::vector<T>& input)
     char buf[2*SHA256::DIGEST_SIZE+1];
     buf[2*SHA256::DIGEST_SIZE] = 0;
     for (int i = 0; i < SHA256::DIGEST_SIZE; i++)
-        sprintf(buf+i*2, "%02x", digest[i]);
+        snprintf(buf+i*2, 3, "%02x", digest[i]);
     return std::string(buf);
 }
 
@@ -163,6 +163,6 @@ std::string sha256(const unsigned char* pdata, size_t num_bytes)
     char buf[2*SHA256::DIGEST_SIZE+1];
     buf[2*SHA256::DIGEST_SIZE] = 0;
     for (int i = 0; i < SHA256::DIGEST_SIZE; i++)
-        sprintf(buf+i*2, "%02x", digest[i]);
+        snprintf(buf+i*2, 3, "%02x", digest[i]);
     return std::string(buf);
 }

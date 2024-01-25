@@ -139,7 +139,8 @@ PyObject *idm_get_genomes(PyObject *args)
     size_t current_interval = 0;
     size_t percent = 0;
     std::vector<uint32_t> interval_lengths;
-    // DEBUG ONLY clock_t start, end;
+    clock_t start;
+    // DEBUG ONLY clock_t end;
     // DEBUG ONLY float elapsed;
 
     DPRINT("idm_get_genomes: calling PyArg_ParseTuple()...\n");
@@ -212,7 +213,7 @@ PyObject *idm_get_genomes(PyObject *args)
     stride = PyArray_STRIDES(array)[0];
     pids = nd_sample_ids ? (uint32_t*)PyArray_DATA(nd_sample_ids) : nullptr;
 
-    // DEBUG ONLY start = clock();
+    start = clock();
     for (iter = tsk_tree_first(&tree), current_interval = 0; iter == 1; iter = tsk_tree_next(&tree), ++current_interval) {
         interval_lengths.push_back(uint32_t(tree.right-tree.left));
         progress(percent, current_interval, tree_sequence->num_trees, start);

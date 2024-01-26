@@ -164,7 +164,7 @@ jobs:
       - name: Upload sdist
         uses: actions/upload-artifact@v2
         with:
-          name: sdist
+          name: sdist3.9
           path: python/dist
 
       - name: Build wheels in docker
@@ -175,7 +175,7 @@ jobs:
       - name: Upload Wheels
         uses: actions/upload-artifact@v2
         with:
-          name: linux-wheels
+          name: linux-wheels3.9
           path: python/dist/wheelhouse
 
   manylinux10:
@@ -200,7 +200,7 @@ jobs:
       - name: Upload sdist
         uses: actions/upload-artifact@v2
         with:
-          name: sdist
+          name: sdist3.10
           path: python/dist
 
       - name: Build wheels in docker
@@ -211,7 +211,7 @@ jobs:
       - name: Upload Wheels
         uses: actions/upload-artifact@v2
         with:
-          name: linux-wheels
+          name: linux-wheels3.10
           path: python/dist/wheelhouse
 
   manylinux11:
@@ -236,7 +236,7 @@ jobs:
       - name: Upload sdist
         uses: actions/upload-artifact@v2
         with:
-          name: sdist
+          name: sdist3.11
           path: python/dist
 
       - name: Build wheels in docker
@@ -247,7 +247,7 @@ jobs:
       - name: Upload Wheels
         uses: actions/upload-artifact@v2
         with:
-          name: linux-wheels
+          name: linux-wheels3.11
           path: python/dist/wheelhouse
 
   OSX-test:
